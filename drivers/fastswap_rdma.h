@@ -12,6 +12,11 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 
+#define leaf_shift 13 
+#define num_groups 8
+#define addr_space 1024 * 1024 * 1024 * 32l
+#define print_interval 256
+
 enum qp_type {
   QP_READ_SYNC,
   QP_READ_ASYNC,
@@ -70,6 +75,9 @@ struct sswap_rdma_ctrl {
 };
 
 atomic_t num_swap_pages = ATOMIC_INIT(0);
+const size_t num_pages_total = addr_space >> PAGE_SHIFT;
+spinlock_t locks[num_groups];
+char pages_status[num_pages_total] = {'0'};
 
 struct rdma_queue *sswap_rdma_get_queue(unsigned int idx, enum qp_type type);
 enum qp_type get_queue_type(unsigned int idx);
@@ -77,5 +85,6 @@ int sswap_rdma_read_async(struct page *page, u64 roffset);
 int sswap_rdma_read_sync(struct page *page, u64 roffset);
 int sswap_rdma_write(struct page *page, u64 roffset);
 int sswap_rdma_poll_load(int cpu);
+void sswap_rdma_free_page(u64 roffset);
 
 #endif

@@ -69,6 +69,7 @@ static int sswap_poll_load(int cpu)
 
 static void sswap_invalidate_page(unsigned type, pgoff_t offset)
 {
+  sswap_rdma_free_page(offset << PAGE_SHIFT);
   return;
 }
 

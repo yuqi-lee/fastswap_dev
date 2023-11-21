@@ -697,18 +697,28 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 {
   int ret;
   struct rdma_queue *q;
+  int num_swap_pages_tmp;
+  int page_offset = roffset >> PAGE_SHIFT;
 
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
+
+  if(pages_status[page_offset] == '0') {
+    spin_lock(locks[page_offset % 8]);
+    pages_status[page_offset] = '1';
+    spin_unlock(locks[page_offset % 8]);
+    atomic_inc(&num_swap_pages);
+    num_swap_pages_tmp = atomic_read(&num_swap_pages);
+
+    if(num_swap_pages_tmp % print_interval == 0) {
+      pr_info("num_swap_pages = %d\n", num_swap_pages_tmp);
+    }
+
+  }
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
   ret = write_queue_add(q, page, roffset);
   BUG_ON(ret);
   drain_queue(q);
-
-  atomic_inc(&num_swap_pages);
-  if(num_swap_pages % 1024 == 0) {
-    pr_info("num_swap_pages = %d\n", num_swap_pages);
-  }
 
   return ret;
 }
@@ -758,14 +768,28 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
   ret = begin_read(q, page, roffset);
 
-  atomic_dec(&num_swap_pages);
-  if(num_swap_pages % 1024 == 0) {
-    pr_info("num_swap_pages = %d\n", num_swap_pages);
-  }
 
   return ret;
 }
 EXPORT_SYMBOL(sswap_rdma_read_async);
+
+void sswap_rdma_free_page(u64 roffset) {
+  int num_swap_pages_tmp;
+  int page_offset = roffset >> PAGE_SHIFT;
+
+  spin_lock(locks(page_offset % num_groups));
+  pages_status[page_offset] = '0';
+  spin_unlock(locks(page_offset % num_groups));
+  atomic_dec(&num_swap_pages);
+
+  num_swap_pages_tmp = atomic_read(&num_swap_pages);
+  if(num_swap_pages_tmp % print_interval == 0) {
+      pr_info("num_swap_pages = %d\n", num_swap_pages_tmp);
+  }
+
+  return
+}
+EXPORT_SYMBOL(sswap_rdma_free_page);
 
 int sswap_rdma_read_sync(struct page *page, u64 roffset)
 {
@@ -779,11 +803,6 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
   ret = begin_read(q, page, roffset);
 
-  atomic_dec(&num_swap_pages);
-  if(num_swap_pages % 1024 == 0) {
-    pr_info("num_swap_pages = %d\n", num_swap_pages);
-  }
-  
   return ret;
 }
 EXPORT_SYMBOL(sswap_rdma_read_sync);
@@ -830,6 +849,7 @@ inline struct rdma_queue *sswap_rdma_get_queue(unsigned int cpuid,
 static int __init sswap_rdma_init_module(void)
 {
   int ret;
+  int i = 0;
 
   pr_info("start: %s\n", __FUNCTION__);
   pr_info("* RDMA BACKEND *");
@@ -859,6 +879,18 @@ static int __init sswap_rdma_init_module(void)
     ib_unregister_client(&sswap_rdma_ib_client);
     return -ENODEV;
   }
+
+  for(i = 0;i < num_groups; ++i) {
+    spin_lock_init(locks[i]);
+  }
+  
+
+
+  for(i = 0;i < num_pages_total; ++i) {
+    pages_status[i] = '0'; 
+  }
+
+
 
   pr_info("ctrl is ready for reqs\n");
   return 0;
