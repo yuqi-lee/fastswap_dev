@@ -16,6 +16,7 @@
 #define num_groups 8
 #define addr_space 1024 * 1024 * 1024 * 32l
 #define print_interval 256
+#define num_pages_total  (addr_space) >> PAGE_SHIFT
 
 enum qp_type {
   QP_READ_SYNC,
@@ -75,7 +76,6 @@ struct sswap_rdma_ctrl {
 };
 
 atomic_t num_swap_pages = ATOMIC_INIT(0);
-const size_t num_pages_total = addr_space >> PAGE_SHIFT;
 spinlock_t locks[num_groups];
 char pages_status[num_pages_total] = {'0'};
 

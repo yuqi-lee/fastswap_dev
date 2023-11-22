@@ -703,9 +703,9 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
   if(pages_status[page_offset] == '0') {
-    spin_lock(locks[page_offset % 8]);
+    spin_lock(locks+ (page_offset % num_groups));
     pages_status[page_offset] = '1';
-    spin_unlock(locks[page_offset % 8]);
+    spin_unlock(locks + (page_offset % num_groups));
     atomic_inc(&num_swap_pages);
     num_swap_pages_tmp = atomic_read(&num_swap_pages);
 
@@ -777,9 +777,9 @@ void sswap_rdma_free_page(u64 roffset) {
   int num_swap_pages_tmp;
   int page_offset = roffset >> PAGE_SHIFT;
 
-  spin_lock(locks(page_offset % num_groups));
+  spin_lock(locks + (page_offset % num_groups));
   pages_status[page_offset] = '0';
-  spin_unlock(locks(page_offset % num_groups));
+  spin_unlock(locks + (page_offset % num_groups));
   atomic_dec(&num_swap_pages);
 
   num_swap_pages_tmp = atomic_read(&num_swap_pages);
@@ -787,7 +787,7 @@ void sswap_rdma_free_page(u64 roffset) {
       pr_info("num_swap_pages = %d\n", num_swap_pages_tmp);
   }
 
-  return
+  return;
 }
 EXPORT_SYMBOL(sswap_rdma_free_page);
 
@@ -881,7 +881,7 @@ static int __init sswap_rdma_init_module(void)
   }
 
   for(i = 0;i < num_groups; ++i) {
-    spin_lock_init(locks[i]);
+    spin_lock_init(locks + i);
   }
   
 
