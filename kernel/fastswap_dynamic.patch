@@ -65,20 +65,9 @@ index 45e91dd6..c052b901 100644
  extern void end_swap_bio_write(struct bio *bio);
  extern int __swap_writepage(struct page *page, struct writeback_control *wbc,
 diff --git a/mm/frontswap.c b/mm/frontswap.c
-index fec8b504..cec34290 100644
+index fec8b504..8e4ae80b 100644
 --- a/mm/frontswap.c
 +++ b/mm/frontswap.c
-@@ -264,8 +264,8 @@ int __frontswap_store(struct page *page)
- 	 */
- 	if (__frontswap_test(sis, offset)) {
- 		__frontswap_clear(sis, offset);
--		for_each_frontswap_ops(ops)
--			ops->invalidate_page(type, offset);
-+		//for_each_frontswap_ops(ops)
-+		//	ops->invalidate_page(type, offset);
- 	}
- 
- 	/* Try to store in each implementation, until one succeeds. */
 @@ -325,6 +325,50 @@ int __frontswap_load(struct page *page)
  }
  EXPORT_SYMBOL(__frontswap_load);
