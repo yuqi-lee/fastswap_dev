@@ -25,6 +25,7 @@ endif
 obj-m  := fastswap.o
 ifeq ($(BACKEND),RDMA)
 	obj-m += fastswap_rdma.o
+	obj-m += rpage_allocator.o
 	CFLAGS_fastswap.o=-DBACKEND=2
 else
 	obj-m += fastswap_dram.o

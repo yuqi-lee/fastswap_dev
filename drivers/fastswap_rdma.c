@@ -465,11 +465,13 @@ static void sswap_rdma_read_done(struct ib_cq *cq, struct ib_wc *wc)
 }
 
 inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe,
-  struct ib_sge *sge, u64 roffset, enum ib_wr_opcode op)
+  struct ib_sge *sge, u64 raddr, enum ib_wr_opcode op)
 {
   struct ib_send_wr *bad_wr;
   struct ib_rdma_wr rdma_wr = {};
   int ret;
+  struct block_info *bi = NULL; 
+  u64 raddr_ = (raddr/rblock_size) << BLOCK_SHIFT;
 
   BUG_ON(qe->dma == 0);
 
@@ -485,8 +487,14 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   rdma_wr.wr.num_sge = 1;
   rdma_wr.wr.opcode  = op;
   rdma_wr.wr.send_flags = IB_SEND_SIGNALED;
-  rdma_wr.remote_addr = q->ctrl->servermr.baseaddr + roffset;
-  rdma_wr.rkey = q->ctrl->servermr.key;
+  rdma_wr.remote_addr = /*q->ctrl->servermr.baseaddr +*/ raddr;
+
+  bi = rhashtable_lookup_fast(blocks_map, &raddr_, blocks_map_params);
+  if(!bi || bi->rkey == 0) {
+    pr_err("cannot get rkey");
+    return -1;
+  }
+  rdma_wr.rkey = bi->rkey;
 
   atomic_inc(&q->pending);
   ret = ib_post_send(q->qp, &rdma_wr.wr, &bad_wr);
@@ -699,16 +707,22 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int num_swap_pages_tmp;
   int page_offset = roffset >> PAGE_SHIFT;
+  u64 raddr = 0;
 
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
   if(offset_to_rpage_addr[page_offset] == 0) {
     spin_lock(locks+ (page_offset % num_groups));
-    offset_to_rpage_addr[page_offset] = 1;
+    raddr = alloc_remote_page();
+    if(raddr == 0) {
+      pr_err("bad remote page alloc\n");
+      return -1;
+    }
+    offset_to_rpage_addr[page_offset] = raddr;
     spin_unlock(locks + (page_offset % num_groups));
+
     atomic_inc(&num_swap_pages);
     num_swap_pages_tmp = atomic_read(&num_swap_pages);
-
     if(num_swap_pages_tmp % print_interval == 0) {
       pr_info("num_swap_pages = %d\n", num_swap_pages_tmp);
     }
@@ -716,7 +730,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   }
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
-  ret = write_queue_add(q, page, roffset);
+  ret = write_queue_add(q, page, offset_to_rpage_addr[page_offset]);
   BUG_ON(ret);
   drain_queue(q);
 
@@ -882,10 +896,22 @@ static int __init sswap_rdma_init_module(void)
 
   ret = cpu_cache_init();
   if (ret) {
-    pr_err("\n");
+    pr_err("cpu cache init failed\n");
     ib_unregister_client(&sswap_rdma_ib_client);
     return -ENODEV;
   }
+
+  blocks_map = kmalloc(sizeof(struct rhashtable), GFP_KERNEL);
+  if (!blocks_map) {
+    pr_err("alloc memory for blocks_map failed\n");
+    ib_unregister_client(&sswap_rdma_ib_client);
+    return -ENODEV;
+  }
+  rhashtable_init(blocks_map, &blocks_map_params);
+
+  INIT_LIST_HEAD(&free_blocks_list);
+
+  spin_lock_init(&free_blocks_list_lock);
 
   for(i = 0;i < num_groups; ++i) {
     spin_lock_init(locks + i);
