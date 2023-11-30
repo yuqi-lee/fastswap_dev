@@ -702,9 +702,9 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
-  if(pages_status[page_offset] == '0') {
+  if(offset_to_rpage_addr[page_offset] == 0) {
     spin_lock(locks+ (page_offset % num_groups));
-    pages_status[page_offset] = '1';
+    offset_to_rpage_addr[page_offset] = 1;
     spin_unlock(locks + (page_offset % num_groups));
     atomic_inc(&num_swap_pages);
     num_swap_pages_tmp = atomic_read(&num_swap_pages);
@@ -778,7 +778,7 @@ void sswap_rdma_free_page(u64 roffset) {
   int page_offset = roffset >> PAGE_SHIFT;
 
   spin_lock(locks + (page_offset % num_groups));
-  pages_status[page_offset] = '0';
+  offset_to_rpage_addr[page_offset] = 0;
   spin_unlock(locks + (page_offset % num_groups));
   atomic_dec(&num_swap_pages);
 
@@ -880,14 +880,19 @@ static int __init sswap_rdma_init_module(void)
     return -ENODEV;
   }
 
+  ret = cpu_cache_init();
+  if (ret) {
+    pr_err("\n");
+    ib_unregister_client(&sswap_rdma_ib_client);
+    return -ENODEV;
+  }
+
   for(i = 0;i < num_groups; ++i) {
     spin_lock_init(locks + i);
   }
   
-
-
   for(i = 0;i < num_pages_total; ++i) {
-    pages_status[i] = '0'; 
+    offset_to_rpage_addr[i] = 0; 
   }
 
 

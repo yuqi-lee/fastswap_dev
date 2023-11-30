@@ -59,6 +59,7 @@ EXPORT_SYMBOL(sswap_rdma_drain_loads_sync);
 static void __exit sswap_dram_cleanup_module(void)
 {
 	vfree(drambuf);
+	vunmap(cpu_cache_);
 }
 
 static int __init sswap_dram_init_module(void)

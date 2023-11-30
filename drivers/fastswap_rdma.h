@@ -1,6 +1,7 @@
 #if !defined(_SSWAP_RDMA_H)
 #define _SSWAP_RDMA_H
 
+#include "rpage_allocator.h"
 #include <rdma/ib_verbs.h>
 #include <rdma/rdma_cm.h>
 #include <linux/inet.h>
@@ -14,7 +15,6 @@
 
 #define leaf_shift 13 
 #define num_groups 8
-#define addr_space 1024 * 1024 * 1024 * 32l
 #define print_interval 256
 #define num_pages_total  (addr_space) >> PAGE_SHIFT
 
@@ -77,7 +77,7 @@ struct sswap_rdma_ctrl {
 
 atomic_t num_swap_pages = ATOMIC_INIT(0);
 spinlock_t locks[num_groups];
-char pages_status[num_pages_total] = {'0'};
+u64 offset_to_rpage_addr[num_pages_total] = {0};
 
 struct rdma_queue *sswap_rdma_get_queue(unsigned int idx, enum qp_type type);
 enum qp_type get_queue_type(unsigned int idx);
