@@ -203,8 +203,8 @@ static int sswap_rdma_route_resolved(struct rdma_queue *q,
   param.initiator_depth = 16;
   param.retry_count = 7;
   param.rnr_retry_count = 7;
-  param.private_data = NULL;
-  param.private_data_len = 0;
+  param.private_data = 0;
+  param.private_data_len = 1;
 
   pr_info("max_qp_rd_atom=%d max_qp_init_rd_atom=%d\n",
       q->ctrl->rdev->dev->attrs.max_qp_rd_atom,
