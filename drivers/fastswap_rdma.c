@@ -2,7 +2,7 @@
 
 #include "fastswap_rdma.h"
 #include <linux/slab.h>
-#include <linux/cpumask.h>
+#include <linux/cpumask.h> 
 
 static struct sswap_rdma_ctrl *gctrl;
 static int serverport;
@@ -894,24 +894,7 @@ static int __init sswap_rdma_init_module(void)
     return -ENODEV;
   }
 
-  ret = cpu_cache_init();
-  if (ret) {
-    pr_err("cpu cache init failed\n");
-    ib_unregister_client(&sswap_rdma_ib_client);
-    return -ENODEV;
-  }
-
-  blocks_map = kmalloc(sizeof(struct rhashtable), GFP_KERNEL);
-  if (!blocks_map) {
-    pr_err("alloc memory for blocks_map failed\n");
-    ib_unregister_client(&sswap_rdma_ib_client);
-    return -ENODEV;
-  }
-  rhashtable_init(blocks_map, &blocks_map_params);
-
-  INIT_LIST_HEAD(&free_blocks_list);
-
-  spin_lock_init(&free_blocks_list_lock);
+  
 
   for(i = 0;i < num_groups; ++i) {
     spin_lock_init(locks + i);
@@ -920,8 +903,6 @@ static int __init sswap_rdma_init_module(void)
   for(i = 0;i < num_pages_total; ++i) {
     offset_to_rpage_addr[i] = 0; 
   }
-
-
 
   pr_info("ctrl is ready for reqs\n");
   return 0;

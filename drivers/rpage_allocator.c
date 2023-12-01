@@ -1,3 +1,4 @@
+#define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 #include "rpage_allocator.h"
 
 #include <linux/types.h>
@@ -10,6 +11,15 @@
 #include <linux/vmalloc.h>
 #include <linux/smp.h>
 
+void cpu_cache_dump(void) {
+    pr_info("cpu_cache_ block_size = %lld\n", cpu_cache_->block_size);
+}
+EXPORT_SYMBOL(cpu_cache_dump);
+
+void cpu_cache_delete(void) {
+    vunmap(cpu_cache_);
+}
+EXPORT_SYMBOL(cpu_cache_delete);
 
 int cpu_cache_init(void) {
     struct path path_;
@@ -22,6 +32,8 @@ int cpu_cache_init(void) {
 
     if (kern_path("/dev/shm/cpu_cache", LOOKUP_FOLLOW, &path_) != 0) {
         // handle error
+        pr_err("debug: cannot find /cpu_cache\n");
+        return -1;
     }
 
     addr_space_ = path_.dentry->d_inode->i_mapping;
@@ -188,6 +200,8 @@ void free_remote_page(u64 raddr) {
         bi->cnt += 1;
         if(bi->cnt == rblock_size >> PAGE_SHIFT) {
             free_remote_block(bi);
+        } else if(bi-> cnt == 1) {
+            list_add(&bi->block_node_list, &free_blocks_list);
         }
     }
     else {
@@ -208,3 +222,36 @@ void free_remote_block(struct block_info *bi) {
     kfree(bi);
 }
 EXPORT_SYMBOL(free_remote_block);
+
+static int __init rpage_allocator_init_module(void) {
+    int ret = 0;
+
+    ret = cpu_cache_init();
+    if (ret) {
+        pr_err("cpu cache init failed\n");
+        return ret;
+    }
+    cpu_cache_dump();
+
+    blocks_map = kmalloc(sizeof(struct rhashtable), GFP_KERNEL);
+    if (!blocks_map) {
+        pr_err("alloc memory for blocks_map failed\n");
+        return -1;
+    }
+
+    rhashtable_init(blocks_map, &blocks_map_params);
+    INIT_LIST_HEAD(&free_blocks_list);
+    spin_lock_init(&free_blocks_list_lock);
+
+    return 0;
+}
+
+static void __exit rpage_allocator_cleanup_module(void) {
+    cpu_cache_delete();
+}
+
+module_init(rpage_allocator_init_module);
+module_exit(rpage_allocator_cleanup_module);
+
+MODULE_LICENSE("GPL v2");
+MODULE_DESCRIPTION("Remote Page Allocator");

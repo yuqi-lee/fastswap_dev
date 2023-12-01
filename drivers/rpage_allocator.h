@@ -4,6 +4,7 @@
 #include <linux/cpumask.h>
 #include <linux/slab.h>
 #include <linux/rhashtable.h>
+#include <linux/module.h>
 
 #define addr_space 1024 * 1024 * 1024 * 32l
 #define rblock_size 4 * 1024 * 1024
@@ -71,6 +72,8 @@ spinlock_t free_blocks_list_lock;
 struct cpu_cache_storage *cpu_cache_ = NULL;
 
 int cpu_cache_init(void);
+void cpu_cache_dump(void);
+void cpu_cache_delete(void);
 
 int alloc_remote_block(void);
 void free_remote_block(struct block_info *bi);
