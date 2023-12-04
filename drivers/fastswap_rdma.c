@@ -470,8 +470,8 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   struct ib_send_wr *bad_wr;
   struct ib_rdma_wr rdma_wr = {};
   int ret;
-  struct block_info *bi = NULL; 
-  u64 raddr_ = raddr;
+  //struct block_info *bi = NULL; 
+  //u64 raddr_ = raddr;
 
   BUG_ON(qe->dma == 0);
 
