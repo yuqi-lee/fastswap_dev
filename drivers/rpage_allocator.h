@@ -12,7 +12,7 @@
 #define BLOCK_SHIFT 22
 
 // u32 num_cpus = num_online_cpus();
-#define nprocs 16
+#define nprocs 20
 #define max_alloc_item 16
 #define max_free_item 256
 #define class_num 16
@@ -80,5 +80,5 @@ void free_remote_block(struct block_info *bi);
 u64 alloc_remote_page(void);
 void free_remote_page(u64 raddr);
 int fetch_cache(u64 *raddr, u32 *rkey);
-void add_cache(u64 raddr, u32 rkey);
+void add_free_cache(u64 raddr/*, u32 rkey*/);
 u32 get_rkey(u64 raddr);

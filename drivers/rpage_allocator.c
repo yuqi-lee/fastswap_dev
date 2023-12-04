@@ -11,6 +11,17 @@
 #include <linux/vmalloc.h>
 #include <linux/smp.h>
 
+u32 get_rkey(u64 raddr) {
+    struct block_info *bi = NULL;
+
+    bi = rhashtable_lookup_fast(blocks_map, &raddr, blocks_map_params);
+    if(!bi || bi->rkey == 0) {
+        pr_err("cannot get rkey\n");
+        return 0;
+    }
+    return bi->rkey();
+}
+
 void cpu_cache_dump(void) {
     pr_info("cpu_cache_ block_size = %lld\n", cpu_cache_->block_size);
 }
@@ -117,13 +128,16 @@ int fetch_cache(u64 *raddr, u32 *rkey) {
     }
 }
 
-void add_cache(u64 raddr, u32 rkey) {
-    u32 nproc = raw_smp_processor_id(); 
-    u32 writer = cpu_cache_->writer[nproc];
-    if(cpu_cache_->items[nproc][writer].addr == -1){
-        cpu_cache_->items[nproc][writer].rkey = rkey;
-        cpu_cache_->items[nproc][writer].addr = raddr;
-        cpu_cache_->writer[nproc] = (writer + 1) % max_item;
+void add_free_cache(u64 raddr/*, u32 rkey*/) {
+    u32 nproc = raw_smp_processor_id()();
+    if(nproc < 0){
+        pr_err("get cpu_number failed\n");
+        return;
+    }
+    uint32_t writer = cpu_cache_content_->free_writer[nproc];
+    if(cpu_cache_content_->free_items[nproc][writer] == -1){
+        cpu_cache_content_->free_items[nproc][writer] = raddr;
+        cpu_cache_content_->free_writer[nproc] = (writer + 1) % max_item;
     }
 }
 
@@ -235,7 +249,7 @@ void free_remote_block(struct block_info *bi) {
     list_del(&bi->block_node_list);
     rhashtable_remove_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
 
-    add_cache(bi->raddr, bi->rkey);
+    add_free_cache(bi->raddr/*, bi->rkey*/);
 
     kfree(bi);
 }

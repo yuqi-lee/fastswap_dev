@@ -471,7 +471,7 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   struct ib_rdma_wr rdma_wr = {};
   int ret;
   struct block_info *bi = NULL; 
-  u64 raddr_ = (raddr/rblock_size) << BLOCK_SHIFT;
+  u64 raddr_ = raddr;
 
   BUG_ON(qe->dma == 0);
 
@@ -489,12 +489,17 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   rdma_wr.wr.send_flags = IB_SEND_SIGNALED;
   rdma_wr.remote_addr = /*q->ctrl->servermr.baseaddr +*/ raddr;
 
-  bi = rhashtable_lookup_fast(blocks_map, &raddr_, blocks_map_params);
-  if(!bi || bi->rkey == 0) {
-    pr_err("cannot get rkey");
+  //bi = rhashtable_lookup_fast(blocks_map, &raddr_, blocks_map_params);
+  //if(!bi || bi->rkey == 0) {
+    //pr_err("cannot get rkey\n");
+    //return -1;
+  //}
+  //rdma_wr.rkey = bi->rkey;
+  rdma_wr.rkey = get_rkey(raddr);
+  if(rdma_wr.rkey == 0) {
+    pr_err("remote address is invalid.\n");
     return -1;
   }
-  rdma_wr.rkey = bi->rkey;
 
   atomic_inc(&q->pending);
   ret = ib_post_send(q->qp, &rdma_wr.wr, &bad_wr);
