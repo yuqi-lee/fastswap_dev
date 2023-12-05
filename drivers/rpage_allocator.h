@@ -62,7 +62,8 @@ struct rhashtable_params blocks_map_params = {
     .key_offset = offsetof(struct block_info, raddr),
     .key_len = sizeof(((struct block_info *)0)->raddr),
     .hashfn = jhash,
-    .nulls_base = (1U << RHT_BASE_SHIFT),
+    // .nulls_base = (1U << RHT_BASE_SHIFT), 
+    // not support in kernel 5.15
 };
 
 struct rhashtable *blocks_map = NULL;

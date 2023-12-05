@@ -21,6 +21,7 @@ u32 get_rkey(u64 raddr) {
     }
     return bi->rkey;
 }
+EXPORT_SYMBOL(get_rkey);
 
 void cpu_cache_dump(void) {
     pr_info("cpu_cache_ block_size = %lld\n", cpu_cache_->block_size);
@@ -63,7 +64,7 @@ int cpu_cache_init(void) {
     }
     
     radix_tree_iter_init(&iter_, 0);
-    radix_tree_for_each_slot(slot_, &addr_space_->page_tree, &iter_, 0) {
+    radix_tree_for_each_slot(slot_, &addr_space_->i_pages, &iter_, 0) {
         page_ = radix_tree_deref_slot(slot_);
         // do something with page
         pages_[i] = page_;

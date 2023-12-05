@@ -27,9 +27,11 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 #define CQ_NUM_CQES	(QP_MAX_SEND_WR)
 #define POLL_BATCH_HIGH (QP_MAX_SEND_WR / 4)
 
-static void sswap_rdma_addone(struct ib_device *dev)
+static int sswap_rdma_addone(struct ib_device *dev)
 {
   pr_info("sswap_rdma_addone() = %s\n", dev->name);
+  return 0;
+  // TODO
 }
 
 static void sswap_rdma_removeone(struct ib_device *ib_device, void *client_data)
@@ -210,7 +212,7 @@ static int sswap_rdma_route_resolved(struct rdma_queue *q,
       q->ctrl->rdev->dev->attrs.max_qp_rd_atom,
       q->ctrl->rdev->dev->attrs.max_qp_init_rd_atom);
 
-  ret = rdma_connect(q->cm_id, &param);
+  ret = rdma_connect_locked(q->cm_id, &param);
   if (ret) {
     pr_err("rdma_connect failed (%d)\n", ret);
     sswap_rdma_destroy_queue_ib(q);
@@ -467,7 +469,7 @@ static void sswap_rdma_read_done(struct ib_cq *cq, struct ib_wc *wc)
 inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe,
   struct ib_sge *sge, u64 raddr, enum ib_wr_opcode op)
 {
-  struct ib_send_wr *bad_wr;
+  const struct ib_send_wr *bad_wr;
   struct ib_rdma_wr rdma_wr = {};
   int ret;
   //struct block_info *bi = NULL; 
@@ -532,7 +534,7 @@ static void sswap_rdma_recv_remotemr_done(struct ib_cq *cq, struct ib_wc *wc)
 static int sswap_rdma_post_recv(struct rdma_queue *q, struct rdma_req *qe,
   size_t bufsize)
 {
-  struct ib_recv_wr *bad_wr;
+  const struct ib_recv_wr *bad_wr;
   struct ib_recv_wr wr = {};
   struct ib_sge sge;
   int ret;
