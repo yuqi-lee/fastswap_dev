@@ -16,9 +16,9 @@ u32 get_rkey(u64 raddr) {
     
     BUG_ON((raddr & ((1 << BLOCK_SHIFT) - 1)) != 0);
 
-    bi = rhashtable_lookup_fast(blocks_map, &raddr_block, blocks_map_params);
+    bi = rhashtable_lookup_fast(blocks_map, &raddr, blocks_map_params);
     if(!bi/* || bi->rkey == 0*/) {
-        pr_err("cannot get rkey(with remote address:%llu)\n", raddr);
+        pr_err("cannot get rkey(with remote address:%p)\n", (void*)raddr);
         return 0;
     }
     return bi->rkey;
@@ -118,7 +118,7 @@ int fetch_cache(u64 *raddr, u32 *rkey) {
     while(get_length(nproc) == 0) ;
     reader = cpu_cache_->reader[nproc];
     fetch_one = cpu_cache_->items[nproc][reader];
-    if(fetch_one.addr != -1 && fetch_one.rkey != 0) {
+    if(fetch_one.addr != -1 && fetch_one.addr != 0 && fetch_one.rkey != 0) {
         *raddr = fetch_one.addr;
         *rkey = fetch_one.rkey;
         cpu_cache_->items[nproc][reader].addr = -1;
@@ -161,7 +161,7 @@ int alloc_remote_block() {
         return -1;
     }
 
-    pr_info("fetch a block with raddr = %llu, rkey = %u\n", raddr_, rkey_);
+    pr_info("fetch a block with raddr = %p, rkey = %u\n", (void*)raddr_, rkey_);
     
     bi = kmalloc(sizeof(struct block_info), GFP_KERNEL);
     if(!bi) {
@@ -172,15 +172,15 @@ int alloc_remote_block() {
     // block_info init
     bi->raddr = raddr_;
     bi->rkey = rkey_;
-    bi->cnt = 1 << (BLOCK_SHIFT - PAGE_SHIFT);
+    bi->cnt = rblock_size >> PAGE_SHIFT;
     spin_lock_init(&(bi->block_lock));
     bitmap_zero(bi->rpages_bitmap, rblock_size >> PAGE_SHIFT);
+    INIT_LIST_HEAD(&bi->block_node_list);
 
     // insert to rhashtable (blocks_map)
     rhashtable_insert_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
     
     // insert to free block list
-    INIT_LIST_HEAD(&bi->block_node_list);
     //spin_lock(&free_blocks_list_lock);
     list_add(&bi->block_node_list, &free_blocks_list);
     //spin_unlock(&free_blocks_list_lock);
@@ -216,6 +216,7 @@ u64 alloc_remote_page(void) {
 
     spin_lock(&bi->block_lock);
     offset = find_first_zero_bit(bi->rpages_bitmap, rblock_size >> PAGE_SHIFT);
+    BUG_ON(offset == (rblock_size >> PAGE_SHIFT));
     set_bit(offset, bi->rpages_bitmap);
     
     bi->cnt -= 1;
@@ -242,21 +243,24 @@ void free_remote_page(u64 raddr) {
     raddr_block = raddr_block << BLOCK_SHIFT;
     bi = rhashtable_lookup_fast(blocks_map, &raddr_block, blocks_map_params);
     if(!bi) {
-        pr_err("the page being free(%llu) is not exit: cannot find out block_info.\n", raddr);
+        pr_err("the page being free(%p) is not exit: cannot find out block_info.\n", (void*)raddr);
         return;
     }
+
+    BUG_ON(raddr_block != bi->raddr);
+    BUG_ON(raddr < bi->raddr);
 
     spin_lock(&free_blocks_list_lock);
     spin_lock(&bi->block_lock);
 
-    offset = (raddr - bi->raddr) / rblock_size;
-    BUGON(offset >= (1 << (BLOCK_SHIFT - PAGE_SHIFT)));
+    offset = (raddr - bi->raddr) >> PAGE_SHIFT;
+    BUG_ON(offset >= (rblock_size >> PAGE_SHIFT));
 
     if(test_bit(offset, bi->rpages_bitmap)) {
         clear_bit(offset, bi->rpages_bitmap);
 
         bi->cnt += 1;
-        if(bi->cnt == rblock_size >> PAGE_SHIFT) {
+        if(bi->cnt == (rblock_size >> PAGE_SHIFT)) {
             free_remote_block(bi);
             spin_unlock(&free_blocks_list_lock);
             return; // no need to release block's lock
@@ -266,7 +270,7 @@ void free_remote_page(u64 raddr) {
     }
     else {
         // error handler...
-        pr_err("the page being free(%llu) is not exit: bitmap is incorrect.\n", raddr);
+        pr_err("the page being free(%p) is not exit: bitmap is incorrect.\n", (void*)raddr);
         // return;
     }
 
@@ -312,6 +316,7 @@ static int __init rpage_allocator_init_module(void) {
 
 static void __exit rpage_allocator_cleanup_module(void) {
     cpu_cache_delete();
+    kfree(blocks_map);
 }
 
 module_init(rpage_allocator_init_module);

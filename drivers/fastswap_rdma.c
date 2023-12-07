@@ -467,7 +467,7 @@ static void sswap_rdma_read_done(struct ib_cq *cq, struct ib_wc *wc)
 }
 
 inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe,
-  struct ib_sge *sge, u64 raddr, enum ib_wr_opcode op)
+  struct ib_sge *sge, u64 raddr, /*u32 rkey,*/enum ib_wr_opcode op)
 {
   const struct ib_send_wr *bad_wr;
   struct ib_rdma_wr rdma_wr = {};
@@ -499,10 +499,10 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
     //pr_err("cannot get rkey\n");
     //return -1;
   //}
-  //rdma_wr.rkey = bi->rkey;
   rdma_wr.rkey = get_rkey(raddr_block);
+  //rdma_wr.rkey = rkey;
   if(rdma_wr.rkey == 0) {
-    pr_err("remote address(%llu) is invalid.\n", raddr);
+    pr_err("remote address(%p) is invalid.\n", (void*)raddr);
     return -1;
   }
 
@@ -667,7 +667,7 @@ static inline int drain_queue(struct rdma_queue *q)
 }
 
 static inline int write_queue_add(struct rdma_queue *q, struct page *page,
-				  u64 roffset)
+				  u64 roffset/*, u32 rkey*/)
 {
   struct rdma_req *req;
   struct ib_device *dev = q->ctrl->rdev->dev;
@@ -685,13 +685,13 @@ static inline int write_queue_add(struct rdma_queue *q, struct page *page,
     return ret;
 
   req->cqe.done = sswap_rdma_write_done;
-  ret = sswap_rdma_post_rdma(q, req, &sge, roffset, IB_WR_RDMA_WRITE);
+  ret = sswap_rdma_post_rdma(q, req, &sge, roffset, /*rkey,*/IB_WR_RDMA_WRITE);
 
   return ret;
 }
 
 static inline int begin_read(struct rdma_queue *q, struct page *page,
-			     u64 roffset)
+			     u64 roffset/*, u32 rkey*/)
 {
   struct rdma_req *req;
   struct ib_device *dev = q->ctrl->rdev->dev;
@@ -711,7 +711,7 @@ static inline int begin_read(struct rdma_queue *q, struct page *page,
     return ret;
 
   req->cqe.done = sswap_rdma_read_done;
-  ret = sswap_rdma_post_rdma(q, req, &sge, roffset, IB_WR_RDMA_READ);
+  ret = sswap_rdma_post_rdma(q, req, &sge, roffset/*, rkey*/,IB_WR_RDMA_READ);
   return ret;
 }
 
@@ -721,12 +721,14 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int num_swap_pages_tmp;
   u64 page_offset = roffset;
-  u64 raddr = 0;
+  u64 raddr = offset_to_rpage_addr[page_offset];
+  //u64 raddr_block = 0;
+  //u32 rkey = 0;
 
   BUG_ON(roffset >= num_pages_total);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
-  if(offset_to_rpage_addr[page_offset] == 0) {
+  if(raddr == 0) {
     spin_lock(locks+ (page_offset % num_groups));
     raddr = alloc_remote_page();
     if(raddr == 0) {
@@ -744,8 +746,18 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 
   }
 
+  BUG_ON(raddr == 0);
+
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
-  ret = write_queue_add(q, page, raddr);
+
+  //raddr_block = raddr >> BLOCK_SHIFT;
+  //raddr_block = raddr_block << BLOCK_SHIFT;
+  //rkey = get_rkey(raddr_block);
+  //if(rkey == 0) {
+    //pr_err("read_async:remote address(%p) is invalid.\n", (void*)raddr);
+    //return -1;
+  //}
+  ret = write_queue_add(q, page, raddr/*, rkey*/);
   BUG_ON(ret);
   drain_queue(q);
 
@@ -798,6 +810,8 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int ret;
   u64 raddr = offset_to_rpage_addr[roffset];
+  //u64 raddr_block;
+  //u32 rkey = 0;
 
   BUG_ON(roffset >= num_pages_total);
   BUG_ON(raddr == 0);
@@ -807,7 +821,15 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
-  ret = begin_read(q, page, raddr);
+  
+  //raddr_block = raddr >> BLOCK_SHIFT;
+  //raddr_block = raddr_block << BLOCK_SHIFT;
+  //rkey = get_rkey(raddr_block);
+  //if(rkey == 0) {
+    //pr_err("read_async:remote address(%p) is invalid.\n", (void*)raddr);
+    //return -1;
+  //}
+  ret = begin_read(q, page, raddr/*, rkey*/);
 
 
   return ret;
@@ -819,8 +841,10 @@ void sswap_rdma_free_page(u64 roffset) {
   int page_offset = roffset/*>> PAGE_SHIFT*/;
 
   BUG_ON(roffset >= num_pages_total);
+
   spin_lock(locks + (page_offset % num_groups));
   if(offset_to_rpage_addr[page_offset] == 0) {
+    pr_err("no mapping for the page being free\n");
     spin_unlock(locks + (page_offset % num_groups));
     return;
   }
@@ -843,6 +867,8 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int ret;
   u64 raddr = offset_to_rpage_addr[roffset];
+  //u64 raddr_block;
+  //u32 rkey = 0;
 
   BUG_ON(raddr == 0);
   BUG_ON(roffset >= num_pages_total);
@@ -852,7 +878,14 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
-  ret = begin_read(q, page, raddr);
+  //raddr_block = raddr >> BLOCK_SHIFT;
+  //raddr_block = raddr_block << BLOCK_SHIFT;
+  //rkey = get_rkey(raddr_block);
+  //if(rkey == 0) {
+    //pr_err("read_sync:remote address(%p) is invalid.\n", (void*)raddr);
+    //return -1;
+  //}
+  ret = begin_read(q, page, raddr/*, rkey*/);
 
   return ret;
 }
@@ -897,6 +930,58 @@ inline struct rdma_queue *sswap_rdma_get_queue(unsigned int cpuid,
   };
 }
 
+static int sswap_rdma_write_read_test(void)
+{
+  struct page *page_ptr = NULL;
+  void *page_vaddr;
+  int* int_ptr;
+  int ret;
+
+  page_ptr = alloc_pages(GFP_KERNEL, 0);
+  if (!page_ptr) {
+    // handle error
+    pr_err("cannot alloc physical frame.\n");
+    return -1;
+  }
+
+  page_vaddr = page_address(page_ptr);
+  int_ptr = (int*) page_vaddr;
+  *int_ptr = 325423;
+
+  ret = sswap_rdma_write(page_ptr, num_pages_total - 1);
+  if(ret) {
+    pr_err("write page failed\n");
+    return -1;
+  }
+
+  *int_ptr = 11111;
+
+  BUG_ON(*int_ptr != 11111);
+
+  ret = sswap_rdma_read_sync(page_ptr, num_pages_total - 1);
+  if(ret) {
+    pr_err("read page failed\n");
+    return -1;
+  }
+
+  page_vaddr = page_address(page_ptr);
+  int_ptr = (int*) page_vaddr;
+  //BUG_ON(*int_ptr != 325423);
+
+  if(*int_ptr == 325423) {
+    pr_info("test pass\n");
+  } else {
+    pr_err("test failed with int = %d\n",(*int_ptr));
+    return -1;
+  }
+
+  __free_pages(page_ptr, 0);
+
+  sswap_rdma_free_page(num_pages_total - 1);
+
+  return 0;
+}
+
 static int __init sswap_rdma_init_module(void)
 {
   int ret;
@@ -931,14 +1016,19 @@ static int __init sswap_rdma_init_module(void)
     return -ENODEV;
   }
 
-  
-
   for(i = 0;i < num_groups; ++i) {
     spin_lock_init(locks + i);
   }
   
   for(i = 0;i < num_pages_total; ++i) {
     offset_to_rpage_addr[i] = 0; 
+  }
+
+  ret = sswap_rdma_write_read_test();
+  if(ret) {
+    pr_err("sswap rdma test failed.\n");
+    //ib_unregister_client(&sswap_rdma_ib_client);
+    //return -ENODEV;
   }
 
   pr_info("ctrl is ready for reqs\n");

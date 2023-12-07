@@ -16,7 +16,7 @@
 #define leaf_shift 13 
 #define num_groups 8
 #define print_interval 256
-#define num_pages_total  (addr_space) >> PAGE_SHIFT
+#define num_pages_total  (addr_space >> PAGE_SHIFT)
 
 enum qp_type {
   QP_READ_SYNC,
