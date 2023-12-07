@@ -3,6 +3,7 @@
 #include "fastswap_rdma.h"
 #include <linux/slab.h>
 #include <linux/cpumask.h> 
+#include <linux/delay.h>
 
 static struct sswap_rdma_ctrl *gctrl;
 static int serverport;
@@ -733,6 +734,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
     raddr = alloc_remote_page();
     if(raddr == 0) {
       pr_err("bad remote page alloc\n");
+      spin_unlock(locks + (page_offset % num_groups));
       return -1;
     }
     offset_to_rpage_addr[page_offset] = raddr;
@@ -954,6 +956,8 @@ static int sswap_rdma_write_read_test(void)
     return -1;
   }
 
+  msleep(1000);
+
   *int_ptr = 11111;
 
   BUG_ON(*int_ptr != 11111);
@@ -963,6 +967,8 @@ static int sswap_rdma_write_read_test(void)
     pr_err("read page failed\n");
     return -1;
   }
+  
+  msleep(1000);
 
   page_vaddr = page_address(page_ptr);
   int_ptr = (int*) page_vaddr;
@@ -1026,7 +1032,7 @@ static int __init sswap_rdma_init_module(void)
 
   ret = sswap_rdma_write_read_test();
   if(ret) {
-    pr_err("sswap rdma test failed.\n");
+    pr_err("sswap rdma write&read test failed.\n");
     //ib_unregister_client(&sswap_rdma_ib_client);
     //return -ENODEV;
   }
