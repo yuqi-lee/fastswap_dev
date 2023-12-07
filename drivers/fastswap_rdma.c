@@ -473,9 +473,12 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   struct ib_rdma_wr rdma_wr = {};
   int ret;
   //struct block_info *bi = NULL; 
-  //u64 raddr_ = raddr;
+  u64 raddr_block = raddr >> BLOCK_SHIFT;
+  raddr_block = raddr_block << BLOCK_SHIFT;  
 
   BUG_ON(qe->dma == 0);
+  BUG_ON(raddr == 0);
+  BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
 
   sge->addr = qe->dma;
   sge->length = PAGE_SIZE;
@@ -497,9 +500,9 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
     //return -1;
   //}
   //rdma_wr.rkey = bi->rkey;
-  rdma_wr.rkey = get_rkey(raddr);
+  rdma_wr.rkey = get_rkey(raddr_block);
   if(rdma_wr.rkey == 0) {
-    pr_err("remote address is invalid.\n");
+    pr_err("remote address(%llu) is invalid.\n", raddr);
     return -1;
   }
 
@@ -512,6 +515,7 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   return ret;
 }
 
+/*
 static void sswap_rdma_recv_remotemr_done(struct ib_cq *cq, struct ib_wc *wc)
 {
   struct rdma_req *qe =
@@ -530,7 +534,9 @@ static void sswap_rdma_recv_remotemr_done(struct ib_cq *cq, struct ib_wc *wc)
 	  ctrl->servermr.key);
   complete_all(&qe->done);
 }
+*/
 
+/*
 static int sswap_rdma_post_recv(struct rdma_queue *q, struct rdma_req *qe,
   size_t bufsize)
 {
@@ -554,6 +560,7 @@ static int sswap_rdma_post_recv(struct rdma_queue *q, struct rdma_req *qe,
   }
   return ret;
 }
+*/
 
 /* allocates a sswap rdma request, creates a dma mapping for it in
  * req->dma, and synchronizes the dma mapping in the direction of
@@ -713,9 +720,10 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   int ret;
   struct rdma_queue *q;
   int num_swap_pages_tmp;
-  int page_offset = roffset >> PAGE_SHIFT;
+  u64 page_offset = roffset;
   u64 raddr = 0;
 
+  BUG_ON(roffset >= num_pages_total);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
   if(offset_to_rpage_addr[page_offset] == 0) {
@@ -737,7 +745,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   }
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
-  ret = write_queue_add(q, page, offset_to_rpage_addr[page_offset]);
+  ret = write_queue_add(q, page, raddr);
   BUG_ON(ret);
   drain_queue(q);
 
@@ -751,8 +759,8 @@ static int sswap_rdma_recv_remotemr_fake(struct sswap_rdma_ctrl *ctrl)
   ctrl->servermr.key = 0;
   return 0;
 }
-EXPORT_SYMBOL(sswap_rdma_recv_remotemr_fake);
 
+/*
 static int sswap_rdma_recv_remotemr(struct sswap_rdma_ctrl *ctrl)
 {
   struct rdma_req *qe;
@@ -774,7 +782,6 @@ static int sswap_rdma_recv_remotemr(struct sswap_rdma_ctrl *ctrl)
   if (unlikely(ret))
     goto out_free_qe;
 
-  /* this delay doesn't really matter, only happens once */
   sswap_rdma_wait_completion(ctrl->queues[0].cq, qe);
 
 out_free_qe:
@@ -782,6 +789,7 @@ out_free_qe:
 out:
   return ret;
 }
+*/
 
 /* page is unlocked when the wr is done.
  * posts an RDMA read on this cpu's qp */
@@ -789,13 +797,17 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 {
   struct rdma_queue *q;
   int ret;
+  u64 raddr = offset_to_rpage_addr[roffset];
 
+  BUG_ON(roffset >= num_pages_total);
+  BUG_ON(raddr == 0);
+  BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
   VM_BUG_ON_PAGE(!PageLocked(page), page);
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
-  ret = begin_read(q, page, roffset);
+  ret = begin_read(q, page, raddr);
 
 
   return ret;
@@ -804,9 +816,15 @@ EXPORT_SYMBOL(sswap_rdma_read_async);
 
 void sswap_rdma_free_page(u64 roffset) {
   int num_swap_pages_tmp;
-  int page_offset = roffset >> PAGE_SHIFT;
+  int page_offset = roffset/*>> PAGE_SHIFT*/;
 
+  BUG_ON(roffset >= num_pages_total);
   spin_lock(locks + (page_offset % num_groups));
+  if(offset_to_rpage_addr[page_offset] == 0) {
+    spin_unlock(locks + (page_offset % num_groups));
+    return;
+  }
+  free_remote_page(offset_to_rpage_addr[page_offset]);
   offset_to_rpage_addr[page_offset] = 0;
   spin_unlock(locks + (page_offset % num_groups));
   atomic_dec(&num_swap_pages);
@@ -824,13 +842,17 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
 {
   struct rdma_queue *q;
   int ret;
+  u64 raddr = offset_to_rpage_addr[roffset];
 
+  BUG_ON(raddr == 0);
+  BUG_ON(roffset >= num_pages_total);
+  BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
   VM_BUG_ON_PAGE(!PageLocked(page), page);
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
-  ret = begin_read(q, page, roffset);
+  ret = begin_read(q, page, raddr);
 
   return ret;
 }

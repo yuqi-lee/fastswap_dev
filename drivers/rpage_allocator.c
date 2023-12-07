@@ -13,10 +13,12 @@
 
 u32 get_rkey(u64 raddr) {
     struct block_info *bi = NULL;
+    
+    BUG_ON((raddr & ((1 << BLOCK_SHIFT) - 1)) != 0);
 
-    bi = rhashtable_lookup_fast(blocks_map, &raddr, blocks_map_params);
-    if(!bi || bi->rkey == 0) {
-        pr_err("cannot get rkey\n");
+    bi = rhashtable_lookup_fast(blocks_map, &raddr_block, blocks_map_params);
+    if(!bi/* || bi->rkey == 0*/) {
+        pr_err("cannot get rkey(with remote address:%llu)\n", raddr);
         return 0;
     }
     return bi->rkey;
@@ -122,6 +124,7 @@ int fetch_cache(u64 *raddr, u32 *rkey) {
         cpu_cache_->items[nproc][reader].addr = -1;
         cpu_cache_->items[nproc][reader].rkey = 0;
         cpu_cache_->reader[nproc] = (reader + 1) % max_item;
+        BUG_ON((fetch_one.addr & ((1 << BLOCK_SHIFT) - 1)) != 0);
         return 0;
     }
     else{
@@ -145,6 +148,7 @@ void add_free_cache(u64 raddr/*, u32 rkey*/) {
     }
 }
 
+// must obtain "free_blocks_list_lock" when excute this function
 int alloc_remote_block() {
     struct block_info *bi;
     u64 raddr_ = 0;
@@ -153,22 +157,29 @@ int alloc_remote_block() {
 
     ret = fetch_cache(&raddr_, &rkey_);
     if(ret) {
-        //
+        pr_err("fetch cache error.\n");
+        return -1;
     }
+
+    pr_info("fetch a block with raddr = %llu, rkey = %u\n", raddr_, rkey_);
     
     bi = kmalloc(sizeof(struct block_info), GFP_KERNEL);
     if(!bi) {
-        //
+        pr_err("init block meta data failed.\n");
+        return -1;
     }
 
+    // block_info init
     bi->raddr = raddr_;
     bi->rkey = rkey_;
     bi->cnt = 1 << (BLOCK_SHIFT - PAGE_SHIFT);
+    spin_lock_init(&(bi->block_lock));
+    bitmap_zero(bi->rpages_bitmap, rblock_size >> PAGE_SHIFT);
 
     // insert to rhashtable (blocks_map)
     rhashtable_insert_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
     
-    // insert to
+    // insert to free block list
     INIT_LIST_HEAD(&bi->block_node_list);
     //spin_lock(&free_blocks_list_lock);
     list_add(&bi->block_node_list, &free_blocks_list);
@@ -190,13 +201,17 @@ u64 alloc_remote_page(void) {
     if(list_empty(&free_blocks_list)) {
         ret = alloc_remote_block();
         if(ret) {
-            //
+            pr_err("cannot fetch a block from cache.\n");
+            spin_unlock(&free_blocks_list_lock);
+            return 0;
         }
     }
 
     bi = list_first_entry(&free_blocks_list, struct block_info, block_node_list);
     if(!bi) {
-        //
+        pr_err("fail to add new block to free_blocks_list\n");
+        spin_unlock(&free_blocks_list_lock);
+        return 0;
     }
 
     spin_lock(&bi->block_lock);
@@ -218,30 +233,41 @@ EXPORT_SYMBOL(alloc_remote_page);
 
 void free_remote_page(u64 raddr) {
     struct block_info *bi = NULL;
-    u64 raddr_ = raddr;
+    u64 raddr_block; 
     u32 offset; 
+    
+    BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
 
-    bi = rhashtable_lookup_fast(blocks_map, &raddr_, blocks_map_params);
+    raddr_block = raddr >> BLOCK_SHIFT;
+    raddr_block = raddr_block << BLOCK_SHIFT;
+    bi = rhashtable_lookup_fast(blocks_map, &raddr_block, blocks_map_params);
     if(!bi) {
-        //
+        pr_err("the page being free(%llu) is not exit: cannot find out block_info.\n", raddr);
+        return;
     }
 
     spin_lock(&free_blocks_list_lock);
     spin_lock(&bi->block_lock);
 
     offset = (raddr - bi->raddr) / rblock_size;
+    BUGON(offset >= (1 << (BLOCK_SHIFT - PAGE_SHIFT)));
+
     if(test_bit(offset, bi->rpages_bitmap)) {
         clear_bit(offset, bi->rpages_bitmap);
 
         bi->cnt += 1;
         if(bi->cnt == rblock_size >> PAGE_SHIFT) {
             free_remote_block(bi);
-        } else if(bi-> cnt == 1) {
+            spin_unlock(&free_blocks_list_lock);
+            return; // no need to release block's lock
+        } else if(bi->cnt == 1) {
             list_add(&bi->block_node_list, &free_blocks_list);
         }
     }
     else {
         // error handler...
+        pr_err("the page being free(%llu) is not exit: bitmap is incorrect.\n", raddr);
+        // return;
     }
 
     spin_unlock(&bi->block_lock);
@@ -249,6 +275,7 @@ void free_remote_page(u64 raddr) {
 }
 EXPORT_SYMBOL(free_remote_page);
 
+// must obtain free_blocks_list_lock when excute this function
 void free_remote_block(struct block_info *bi) {
     list_del(&bi->block_node_list);
     rhashtable_remove_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);

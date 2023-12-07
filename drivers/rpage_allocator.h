@@ -12,7 +12,7 @@
 #define BLOCK_SHIFT 22
 
 // u32 num_cpus = num_online_cpus();
-#define nprocs 20
+#define nprocs 32
 #define max_alloc_item 16
 #define max_free_item 256
 #define class_num 16
