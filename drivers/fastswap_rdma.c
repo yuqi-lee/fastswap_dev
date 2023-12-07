@@ -745,6 +745,14 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 }
 EXPORT_SYMBOL(sswap_rdma_write);
 
+static int sswap_rdma_recv_remotemr_fake(struct sswap_rdma_ctrl *ctrl)
+{
+  ctrl->servermr.baseaddr = 0;
+  ctrl->servermr.key = 0;
+  return 0;
+}
+EXPORT_SYMBOL(sswap_rdma_recv_remotemr_fake);
+
 static int sswap_rdma_recv_remotemr(struct sswap_rdma_ctrl *ctrl)
 {
   struct rdma_req *qe;
@@ -894,7 +902,7 @@ static int __init sswap_rdma_init_module(void)
     return -ENODEV;
   }
 
-  ret = sswap_rdma_recv_remotemr(gctrl);
+  ret = sswap_rdma_recv_remotemr_fake(gctrl);
   if (ret) {
     pr_err("could not setup remote memory region\n");
     ib_unregister_client(&sswap_rdma_ib_client);
