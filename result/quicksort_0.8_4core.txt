@@ -1,0 +1,35 @@
+Setting quicksort0 memory limit to 80% (6600M) of max
+echo $$ > /cgroup2/benchmarks/quicksort0/cgroup.procs && exec taskset -c 4,5,6,7 /usr/bin/time -v /users/YuqiLi/cfm/quicksort/quicksort 8192
+will sort 2147483648 integers (8192 MB)
+time 286116 ms
+ 
+
+        Command being timed: "/users/YuqiLi/cfm/quicksort/quicksort 8192"
+        User time (seconds): 301.43
+        System time (seconds): 42.87
+        Percent of CPU this job got: 98%
+        Elapsed (wall clock) time (h:mm:ss or m:ss): 5:51.29
+        Average shared text size (kbytes): 0
+        Average unshared data size (kbytes): 0
+        Average stack size (kbytes): 0
+        Average total size (kbytes): 0
+        Maximum resident set size (kbytes): 6757100
+        Average resident set size (kbytes): 0
+        Major (requiring I/O) page faults: 782898
+        Minor (reclaiming a frame) page faults: 7150526
+        Voluntary context switches: 283509
+        Involuntary context switches: 917095
+        Swaps: 0
+        File system inputs: 16740960
+        File system outputs: 0
+        Socket messages sent: 0
+        Socket messages received: 0
+        Signals delivered: 0
+        Page size (bytes): 4096
+        Exit status: 0
+ 
+
+Python Wall Time: 351.30250120162964 
+
+Major Page Faults,System Time,User Time,Wall Time
+782898,42.87,301.43,351.29
