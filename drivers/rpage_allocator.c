@@ -93,59 +93,73 @@ int cpu_cache_init(void) {
 }
 EXPORT_SYMBOL(cpu_cache_init);
 
-u32 get_length(u32 nproc) {
+u32 get_length_fetch(u32 nproc) {
     u32 writer = cpu_cache_->writer[nproc];
     u32 reader = cpu_cache_->reader[nproc];
     if (writer == reader) {
-        if (cpu_cache_->items[nproc][writer].addr == -1){
-            return 0;
-        } else {
-            return max_item;
-        }
+        return 0;
     }
     if (writer > reader) {
         return (writer - reader);
     } else {
-         return (max_item - reader + writer);
+        return (max_item - reader + writer);
+    }
+}
+
+u32 get_length_free(u32 nproc) {
+    u32 writer = cpu_cache_->free_writer[nproc];
+    u32 reader = cpu_cache_->free_reader[nproc];
+    if (writer == reader) {
+        return 0;
+    }
+    if (writer > reader) {
+        return (writer - reader);
+    } else {
+        return (max_item - reader + writer);
     }
 }
 
 int fetch_cache(u64 *raddr, u32 *rkey) {
     u32 nproc = raw_smp_processor_id();
     u32 reader;
-    struct raddr_rkey fetch_one;
+    // struct raddr_rkey fetch_one;
 
-    while(get_length(nproc) == 0) ;
+    BUG_ON(nproc > nprocs);
+
     reader = cpu_cache_->reader[nproc];
-    fetch_one = cpu_cache_->items[nproc][reader];
-    if(fetch_one.addr != -1 && fetch_one.addr != 0 && fetch_one.rkey != 0) {
-        *raddr = fetch_one.addr;
-        *rkey = fetch_one.rkey;
-        cpu_cache_->items[nproc][reader].addr = -1;
-        cpu_cache_->items[nproc][reader].rkey = 0;
-        cpu_cache_->reader[nproc] = (reader + 1) % max_item;
-        BUG_ON((fetch_one.addr & ((1 << BLOCK_SHIFT) - 1)) != 0);
-        return 0;
-    }
-    else{
-        return -1;
-    }
+    BUG_ON(reader >= max_item);
+
+    while(get_length_fetch(nproc) == 0) ;
+    cpu_cache_->reader[nproc] = (cpu_cache_->reader[nproc] + 1) % max_item;
+
+    while(cpu_cache_->items[nproc][reader].addr == -1) ;
+    
+    *raddr = cpu_cache_->items[nproc][reader].addr;
+    *rkey = cpu_cache_->items[nproc][reader].rkey;
+    
+    BUG_ON(*raddr == 0);
+    BUG_ON(*rkey == 0);
+
+    cpu_cache_->items[nproc][reader].addr = -1;
+    cpu_cache_->items[nproc][reader].rkey = -1;
+
+    return 0;
 }
 
 void add_free_cache(u64 raddr/*, u32 rkey*/) {
     u32 nproc = raw_smp_processor_id();
     u32 writer;
     
-    if(nproc < 0){
-        pr_err("get cpu_number failed\n");
+    BUG_ON(nproc > nprocs);
+    writer = cpu_cache_->free_writer[nproc];
+
+    if(get_length_free(nproc) < max_item - 1) {
+        cpu_cache_->free_writer[nproc] = (cpu_cache_->free_writer[nproc] + 1) % max_item;
+    } else {
         return;
     }
-
-    writer = cpu_cache_->free_writer[nproc];
-    if(cpu_cache_->free_items[nproc][writer] == -1){
-        cpu_cache_->free_items[nproc][writer] = raddr;
-        cpu_cache_->free_writer[nproc] = (writer + 1) % max_item;
-    }
+ 
+    cpu_cache_->free_items[nproc][writer] = raddr;
 }
 
 // must obtain "free_blocks_list_lock" when excute this function

@@ -12,11 +12,11 @@
 #define BLOCK_SHIFT 22
 
 // u32 num_cpus = num_online_cpus();
-#define nprocs 32
-#define max_alloc_item 16
+#define nprocs 144
+#define max_alloc_item 256
 #define max_free_item 256
 #define class_num 16
-#define max_item 1024
+#define max_item 256
 
 struct raddr_rkey{
     u64 addr;

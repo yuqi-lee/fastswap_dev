@@ -743,7 +743,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
     atomic_inc(&num_swap_pages);
     num_swap_pages_tmp = atomic_read(&num_swap_pages);
     if(num_swap_pages_tmp % print_interval == 0) {
-      pr_info("num_swap_pages = %d\n", num_swap_pages_tmp);
+      pr_info("num_swap_pages = %d, swap memory = %d GB\n", num_swap_pages_tmp, (num_swap_pages_tmp >> 18));
     }
 
   }
@@ -846,7 +846,7 @@ void sswap_rdma_free_page(u64 roffset) {
 
   spin_lock(locks + (page_offset % num_groups));
   if(offset_to_rpage_addr[page_offset] == 0) {
-    pr_err("no mapping for the page being free\n");
+    //pr_err("no mapping for the page being free\n");
     spin_unlock(locks + (page_offset % num_groups));
     return;
   }
@@ -1030,12 +1030,12 @@ static int __init sswap_rdma_init_module(void)
     offset_to_rpage_addr[i] = 0; 
   }
 
-  ret = sswap_rdma_write_read_test();
-  if(ret) {
-    pr_err("sswap rdma write&read test failed.\n");
+  //ret = sswap_rdma_write_read_test();
+  //if(ret) {
+    //pr_err("sswap rdma write&read test failed.\n");
     //ib_unregister_client(&sswap_rdma_ib_client);
     //return -ENODEV;
-  }
+  //}
 
   pr_info("ctrl is ready for reqs\n");
   return 0;
