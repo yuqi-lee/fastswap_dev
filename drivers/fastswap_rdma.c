@@ -855,10 +855,11 @@ void sswap_rdma_free_page(u64 roffset) {
   spin_unlock(locks + (page_offset % num_groups));
   atomic_dec(&num_swap_pages);
 
+  /*
   num_swap_pages_tmp = atomic_read(&num_swap_pages);
   if(num_swap_pages_tmp % print_interval == 0) {
       pr_info("num_swap_pages = %d\n", num_swap_pages_tmp);
-  }
+  }*/
 
   return;
 }
