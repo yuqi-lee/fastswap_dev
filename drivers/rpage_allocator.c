@@ -175,7 +175,7 @@ int alloc_remote_block() {
         return -1;
     }
 
-    pr_info("fetch a block with raddr = %p, rkey = %u\n", (void*)raddr_, rkey_);
+    //pr_info("fetch a block with raddr = %p, rkey = %u\n", (void*)raddr_, rkey_);
     
     bi = kmalloc(sizeof(struct block_info), GFP_KERNEL);
     if(!bi) {

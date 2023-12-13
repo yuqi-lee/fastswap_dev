@@ -429,6 +429,8 @@ static void __exit sswap_rdma_cleanup_module(void)
   if (req_cache) {
     kmem_cache_destroy(req_cache);
   }
+
+  del_timer(&swap_pages_timer);
 }
 
 static void sswap_rdma_write_done(struct ib_cq *cq, struct ib_wc *wc)
@@ -720,7 +722,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 {
   int ret;
   struct rdma_queue *q;
-  int num_swap_pages_tmp;
+  //int num_swap_pages_tmp;
   u64 page_offset = roffset;
   u64 raddr = offset_to_rpage_addr[page_offset];
   //u64 raddr_block = 0;
@@ -741,10 +743,11 @@ int sswap_rdma_write(struct page *page, u64 roffset)
     spin_unlock(locks + (page_offset % num_groups));
 
     atomic_inc(&num_swap_pages);
+    /*
     num_swap_pages_tmp = atomic_read(&num_swap_pages);
     if(num_swap_pages_tmp % print_interval == 0) {
       pr_info("num_swap_pages = %d, swap memory = %d GB\n", num_swap_pages_tmp, (num_swap_pages_tmp >> 18));
-    }
+    }*/
 
   }
 
@@ -839,7 +842,7 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 EXPORT_SYMBOL(sswap_rdma_read_async);
 
 void sswap_rdma_free_page(u64 roffset) {
-  int num_swap_pages_tmp;
+  //int num_swap_pages_tmp;
   int page_offset = roffset/*>> PAGE_SHIFT*/;
 
   BUG_ON(roffset >= num_pages_total);
@@ -931,6 +934,13 @@ inline struct rdma_queue *sswap_rdma_get_queue(unsigned int cpuid,
     default:
       BUG();
   };
+}
+
+void swap_pages_timer_callback(struct timer_list *timer) {
+  int num_swap_pages_tmp = atomic_read(&num_swap_pages);
+  pr_info("num_swap_pages = %d, swap memory = %d MB\n", num_swap_pages_tmp, (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)));
+  
+  mod_timer(timer, jiffies + msecs_to_jiffies(swap_pages_print_interval)); 
 }
 
 static int sswap_rdma_write_read_test(void)
@@ -1037,6 +1047,9 @@ static int __init sswap_rdma_init_module(void)
     //ib_unregister_client(&sswap_rdma_ib_client);
     //return -ENODEV;
   //}
+
+  timer_setup(&swap_pages_timer, swap_pages_timer_callback, 0);
+  mod_timer(&swap_pages_timer, jiffies + msecs_to_jiffies(swap_pages_print_interval));
 
   pr_info("ctrl is ready for reqs\n");
   return 0;

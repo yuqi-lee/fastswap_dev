@@ -12,11 +12,13 @@
 #include <linux/pagemap.h>
 #include <linux/spinlock.h>
 #include <linux/types.h>
+#include <linux/timer.h>
 
 #define leaf_shift 13 
 #define num_groups 8
 #define print_interval (256 * 1024)
 #define num_pages_total  (addr_space >> PAGE_SHIFT)
+#define swap_pages_print_interval 2000
 
 enum qp_type {
   QP_READ_SYNC,
@@ -74,6 +76,8 @@ struct sswap_rdma_ctrl {
     struct sockaddr_in srcaddr_in;
   };
 };
+
+struct timer_list swap_pages_timer;
 
 atomic_t num_swap_pages = ATOMIC_INIT(0);
 spinlock_t locks[num_groups];
