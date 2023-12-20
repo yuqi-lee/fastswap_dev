@@ -1,0 +1,1 @@
+python3 simulation_one_time.py $1 --num_servers 8 --cpus 15 --mem 49152 --workload_ratios 70,70,70 --remotemem --until 15 --size 6000 --max_far $2   --ratios 2:1:8
