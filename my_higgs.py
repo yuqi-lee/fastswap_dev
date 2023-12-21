@@ -2,8 +2,30 @@ import xgboost as xgb
 import pandas as pd
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import roc_auc_score
+# import numpy as np
 import time
+import os
 
+pid = os.getpid()
+os.sched_setaffinity(pid, {1,2,3,4})
+
+# Path to the cgroup v2 hierarchy
+cgroup_path = "/cgroup2"
+
+# Name of the new cgroup
+cgroup_name = "my_cgroup_5"
+
+# Path to the new cgroup
+new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
+
+# Create the new cgroup
+os.makedirs(new_cgroup_path, exist_ok=True)
+# Set the memory limit (in bytes)
+with open(os.path.join(new_cgroup_path, "memory.high"), "w") as f:
+    f.write("4G")
+
+with open(os.path.join(new_cgroup_path, "cgroup.procs"), "w") as f:
+    f.write(str(pid))
 
 start_time = time.time()
 
