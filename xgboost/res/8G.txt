@@ -1,0 +1,2 @@
+AUC:  0.6487130632876016
+Total running time: 775.1423151493073 seconds #num_round=1000
