@@ -88,6 +88,8 @@ int cpu_cache_init(void) {
         return -1;
     }
 
+    pr_info("cpu_cache_ address is %p\n", (void*)cpu_cache_);
+
     kfree(pages_);
     return 0;
 }
@@ -132,7 +134,7 @@ int fetch_cache(u64 *raddr, u32 *rkey) {
     while(get_length_fetch(nproc) == 0) ;
     cpu_cache_->reader[nproc] = (cpu_cache_->reader[nproc] + 1) % max_item;
 
-    while(cpu_cache_->items[nproc][reader].addr == -1) ;
+    while(cpu_cache_->items[nproc][reader].addr == -1 || cpu_cache_->items[nproc][reader].rkey == -1) ;
     
     *raddr = cpu_cache_->items[nproc][reader].addr;
     *rkey = cpu_cache_->items[nproc][reader].rkey;
@@ -174,6 +176,8 @@ int alloc_remote_block() {
         pr_err("fetch cache error.\n");
         return -1;
     }
+
+    BUG_ON(raddr_ == 0 || rkey_ == 0 || raddr_ == -1 || rkey_ == -1);
 
     //pr_info("fetch a block with raddr = %p, rkey = %u\n", (void*)raddr_, rkey_);
     
