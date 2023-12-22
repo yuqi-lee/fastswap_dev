@@ -13,7 +13,7 @@ os.sched_setaffinity(pid, {1,2,3,4})
 cgroup_path = "/cgroup2"
 
 # Name of the new cgroup
-cgroup_name = "my_cgroup_5"
+cgroup_name = "my_cgroup_3"
 
 # Path to the new cgroup
 new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
@@ -22,7 +22,7 @@ new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
 os.makedirs(new_cgroup_path, exist_ok=True)
 # Set the memory limit (in bytes)
 with open(os.path.join(new_cgroup_path, "memory.high"), "w") as f:
-    f.write("4G")
+    f.write("2125M")
 
 with open(os.path.join(new_cgroup_path, "cgroup.procs"), "w") as f:
     f.write(str(pid))
@@ -44,8 +44,8 @@ dval = xgb.DMatrix(X_val, label=y_val)
 dtest = xgb.DMatrix(X_test, label=y_test)
 
 
-param = {'max_depth': 8, 'eta': 0.05, 'objective': 'binary:logistic', 'nthread': 4}
-num_round = 200  
+param = {'max_depth': 9, 'eta': 0.03, 'objective': 'binary:logistic', 'nthread': 4, 'subsample': 0.9}
+num_round = 1000  
 
 
 #bst = xgb.train(param, dtrain, num_round, [(dval, 'eval')], early_stopping_rounds=50)
