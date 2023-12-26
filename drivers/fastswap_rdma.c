@@ -732,11 +732,11 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
   if(raddr == 0) {
-    spin_lock(locks+ (page_offset % num_groups));
+    //spin_lock(locks+ (page_offset % num_groups));
     raddr = alloc_remote_page();
     if(raddr == 0) {
       pr_err("bad remote page alloc\n");
-      spin_unlock(locks + (page_offset % num_groups));
+      //spin_unlock(locks + (page_offset % num_groups));
       return -1;
     }
     offset_to_rpage_addr[page_offset] = raddr;
@@ -847,7 +847,7 @@ void sswap_rdma_free_page(u64 roffset) {
 
   BUG_ON(roffset >= num_pages_total);
 
-  spin_lock(locks + (page_offset % num_groups));
+  //spin_lock(locks + (page_offset % num_groups));
   if(offset_to_rpage_addr[page_offset] == 0) {
     //pr_err("no mapping for the page being free\n");
     spin_unlock(locks + (page_offset % num_groups));
@@ -855,7 +855,7 @@ void sswap_rdma_free_page(u64 roffset) {
   }
   free_remote_page(offset_to_rpage_addr[page_offset]);
   offset_to_rpage_addr[page_offset] = 0;
-  spin_unlock(locks + (page_offset % num_groups));
+  //spin_unlock(locks + (page_offset % num_groups));
   atomic_dec(&num_swap_pages);
 
   /*
