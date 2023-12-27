@@ -14,9 +14,8 @@
 #include <linux/types.h>
 #include <linux/timer.h>
 
-#define leaf_shift 13 
 #define num_groups 8
-#define print_interval (256 * 1024)
+// #define print_interval (256 * 1024)
 #define num_pages_total  (addr_space >> PAGE_SHIFT)
 #define swap_pages_print_interval 2000
 

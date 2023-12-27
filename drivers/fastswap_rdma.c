@@ -740,7 +740,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
       return -1;
     }
     offset_to_rpage_addr[page_offset] = raddr;
-    spin_unlock(locks + (page_offset % num_groups));
+    // spin_unlock(locks + (page_offset % num_groups));
 
     atomic_inc(&num_swap_pages);
     /*
@@ -850,7 +850,7 @@ void sswap_rdma_free_page(u64 roffset) {
   //spin_lock(locks + (page_offset % num_groups));
   if(offset_to_rpage_addr[page_offset] == 0) {
     //pr_err("no mapping for the page being free\n");
-    spin_unlock(locks + (page_offset % num_groups));
+    //spin_unlock(locks + (page_offset % num_groups));
     return;
   }
   free_remote_page(offset_to_rpage_addr[page_offset]);
@@ -943,6 +943,7 @@ void swap_pages_timer_callback(struct timer_list *timer) {
   mod_timer(timer, jiffies + msecs_to_jiffies(swap_pages_print_interval)); 
 }
 
+/*
 static int sswap_rdma_write_read_test(void)
 {
   struct page *page_ptr = NULL;
@@ -997,7 +998,7 @@ static int sswap_rdma_write_read_test(void)
   sswap_rdma_free_page(num_pages_total - 1);
 
   return 0;
-}
+}*/
 
 static int __init sswap_rdma_init_module(void)
 {

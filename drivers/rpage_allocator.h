@@ -6,14 +6,14 @@
 #include <linux/rhashtable.h>
 #include <linux/module.h>
 
-#define addr_space (1024 * 1024 * 1024 * 32l)
+#define addr_space (1024 * 1024 * 1024 * 40l)
 #define rblock_size (4 * 1024 * 1024)
 #define max_block_num (addr_space / rblock_size)
 #define BLOCK_SHIFT 22
 #define MB_SHIFT 20
 
 // u32 num_cpus = num_online_cpus();
-#define nprocs 32
+#define nprocs 64
 #define max_alloc_item 256
 #define max_free_item 256
 #define class_num 16

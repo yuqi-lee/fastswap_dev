@@ -3,7 +3,7 @@ import subprocess
 import time
 
 pid = os.getpid()
-# os.sched_setaffinity(pid, {1,2,3,4})
+# os.sched_setaffinity(pid, {21,22,23,24})
 
 # Path to the cgroup v2 hierarchy
 cgroup_path = "/cgroup2"
@@ -19,12 +19,14 @@ os.makedirs(new_cgroup_path, exist_ok=True)
 
 # Set the memory limit (in bytes)
 with open(os.path.join(new_cgroup_path, "memory.high"), "w") as f:
-    f.write("10009M")  
+    f.write("8G")  
 
 # Run the command as a subprocess
 #command = ["python", "/users/YuqiLi/my_higgs.py"]
 #command = ["/users/YuqiLi/cfm/quicksort/quicksort", "16384"]
-command = ["/users/YuqiLi/XSBench/openmp-threading/XSBench", "-t", "4", "-g", "72000", "-p", "1000000"]
+#command = ["/users/YuqiLi/XSBench/openmp-threading/", "-t", "4", "-g", "72000", "-p", "1000000"]
+#command = ["taskset","-c", "4,6,8,10,12,14,16,18","/users/YuqiLi/gapbs/pr", "-g", "27"]
+command = ["/users/YuqiLi/gapbs/pr", "-u", "26"]
 
 start_time = time.time()
 process = subprocess.Popen(command, stderr=subprocess.PIPE)
