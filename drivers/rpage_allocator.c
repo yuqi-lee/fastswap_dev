@@ -165,7 +165,7 @@ void add_free_cache(u64 raddr/*, u32 rkey*/) {
 }
 
 // must obtain "free_blocks_list_lock" when excute this function
-int alloc_remote_block() {
+int alloc_remote_block(u32 free_list_idx) {
     struct block_info *bi;
     u64 raddr_ = 0;
     u32 rkey_ = 0;
@@ -200,7 +200,7 @@ int alloc_remote_block() {
     
     // insert to free block list
     //spin_lock(&free_blocks_list_lock);
-    list_add(&bi->block_node_list, &free_blocks_list);
+    list_add(&bi->block_node_list, free_blocks_lists + free_list_idx);
     //spin_unlock(&free_blocks_list_lock);
 
     return 0;
@@ -214,21 +214,22 @@ u64 alloc_remote_page(void) {
     u32 offset;
     u64 raddr;
     int ret;
+    u32 nproc = raw_smp_processor_id();
 
-    spin_lock(&free_blocks_list_lock);
-    if(list_empty(&free_blocks_list)) {
-        ret = alloc_remote_block();
+    spin_lock(free_blocks_list_locks + nproc);
+    if(list_empty(free_blocks_lists + nproc)) {
+        ret = alloc_remote_block(nproc);
         if(ret) {
             pr_err("cannot fetch a block from cache.\n");
-            spin_unlock(&free_blocks_list_lock);
+            spin_unlock(free_blocks_list_locks + nproc);
             return 0;
         }
     }
 
-    bi = list_first_entry(&free_blocks_list, struct block_info, block_node_list);
+    bi = list_first_entry(free_blocks_lists + nproc, struct block_info, block_node_list);
     if(!bi) {
         pr_err("fail to add new block to free_blocks_list\n");
-        spin_unlock(&free_blocks_list_lock);
+        spin_unlock(free_blocks_list_locks + nproc);
         return 0;
     }
 
@@ -238,12 +239,14 @@ u64 alloc_remote_page(void) {
     set_bit(offset, bi->rpages_bitmap);
     
     bi->cnt -= 1;
+    BUG_ON(bi->cnt > (rblock_size >> PAGE_SHIFT));
+
     if(bi->cnt == 0) {
         list_del(&bi->block_node_list);
     }
 
     spin_unlock(&bi->block_lock);
-    spin_unlock(&free_blocks_list_lock);
+    spin_unlock(free_blocks_list_locks + nproc);
 
     raddr = bi->raddr + (offset << PAGE_SHIFT);
     return raddr;
@@ -254,6 +257,7 @@ void free_remote_page(u64 raddr) {
     struct block_info *bi = NULL;
     u64 raddr_block; 
     u32 offset; 
+    u32 nproc = raw_smp_processor_id();
     
     BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
 
@@ -268,7 +272,7 @@ void free_remote_page(u64 raddr) {
     BUG_ON(raddr_block != bi->raddr);
     BUG_ON(raddr < bi->raddr);
 
-    spin_lock(&free_blocks_list_lock);
+    spin_lock(free_blocks_list_locks + nproc);
     spin_lock(&bi->block_lock);
 
     offset = (raddr - bi->raddr) >> PAGE_SHIFT;
@@ -280,10 +284,10 @@ void free_remote_page(u64 raddr) {
         bi->cnt += 1;
         if(bi->cnt == (rblock_size >> PAGE_SHIFT)) {
             free_remote_block(bi);
-            spin_unlock(&free_blocks_list_lock);
+            spin_unlock(free_blocks_list_locks + nproc);
             return; // no need to release block's lock
         } else if(bi->cnt == 1) {
-            list_add(&bi->block_node_list, &free_blocks_list);
+            list_add(&bi->block_node_list, free_blocks_list + nproc);
         }
     }
     else {
@@ -293,7 +297,7 @@ void free_remote_page(u64 raddr) {
     }
 
     spin_unlock(&bi->block_lock);
-    spin_unlock(&free_blocks_list_lock);
+    spin_unlock(free_blocks_list_locks + nproc);
 }
 EXPORT_SYMBOL(free_remote_page);
 
@@ -310,6 +314,7 @@ EXPORT_SYMBOL(free_remote_block);
 
 static int __init rpage_allocator_init_module(void) {
     int ret = 0;
+    int i = 0;
 
     ret = cpu_cache_init();
     if (ret) {
@@ -326,8 +331,11 @@ static int __init rpage_allocator_init_module(void) {
     }
 
     rhashtable_init(blocks_map, &blocks_map_params);
-    INIT_LIST_HEAD(&free_blocks_list);
-    spin_lock_init(&free_blocks_list_lock);
+
+    for(i = 0; i < nprocs ; ++i) {
+        INIT_LIST_HEAD(free_blocks_lists + i);
+        spin_lock_init(free_blocks_list_locks + i);
+    }
 
     return 0;
 }
