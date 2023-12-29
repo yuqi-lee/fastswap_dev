@@ -287,7 +287,7 @@ void free_remote_page(u64 raddr) {
             spin_unlock(free_blocks_list_locks + nproc);
             return; // no need to release block's lock
         } else if(bi->cnt == 1) {
-            list_add(&bi->block_node_list, free_blocks_list + nproc);
+            list_add(&bi->block_node_list, free_blocks_lists + nproc);
         }
     }
     else {
