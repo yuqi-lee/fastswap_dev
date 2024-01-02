@@ -68,8 +68,8 @@ struct rhashtable_params blocks_map_params = {
 };
 
 struct rhashtable *blocks_map = NULL;
-struct list_head free_blocks_list;
-spinlock_t free_blocks_list_lock;
+struct list_head free_blocks_lists[nprocs];
+spinlock_t free_blocks_list_locks[nprocs];
 
 struct cpu_cache_storage *cpu_cache_ = NULL;
 
@@ -77,7 +77,7 @@ int cpu_cache_init(void);
 void cpu_cache_dump(void);
 void cpu_cache_delete(void);
 
-int alloc_remote_block(void);
+int alloc_remote_block(u32 free_list_idx);
 void free_remote_block(struct block_info *bi);
 u64 alloc_remote_page(void);
 void free_remote_page(u64 raddr);
