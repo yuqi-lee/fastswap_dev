@@ -13,9 +13,9 @@
 #define MB_SHIFT 20
 
 // u32 num_cpus = num_online_cpus();
-#define nprocs 64
+#define nprocs 128
 #define max_alloc_item 256
-#define max_free_item 256
+#define max_free_item 512
 #define class_num 16
 #define max_item 256
 
