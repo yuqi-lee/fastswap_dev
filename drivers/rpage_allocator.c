@@ -237,7 +237,10 @@ u64 alloc_remote_page(void) {
         return 0;
     }
 
-    BUG_ON(bi->free_list_idx != nproc);
+    //BUG_ON(bi->free_list_idx != nproc);
+    if(bi->free_list_idx != nproc) {
+        pr_err("block_info's free_list_idx error: 1\n");
+    }
 
     spin_lock(&bi->block_lock);
     offset = find_first_zero_bit(bi->rpages_bitmap, rblock_size >> PAGE_SHIFT);
@@ -257,7 +260,10 @@ u64 alloc_remote_page(void) {
     counter = 0;
     list_for_each_entry_safe(entry, next_entry, free_blocks_lists + nproc, block_node_list) {
         spin_lock(&entry->block_lock);
-        BUG_ON(bi->free_list_idx != nproc);
+        //BUG_ON(bi->free_list_idx != nproc);
+        if(bi->free_list_idx != nproc) {
+            pr_err("block_info's free_list_idx error: 2\n");
+        }
         flag = 0;
         if(entry->cnt == (rblock_size >> PAGE_SHIFT)) {
             counter++;
@@ -312,7 +318,10 @@ void free_remote_page(u64 raddr) {
         //    return; // no need to release block's lock
         //} else if(bi->cnt == 1) {
         if(bi->cnt == 1) {
-            BUG_ON(bi->free_list_idx != nprocs);
+            //BUG_ON(bi->free_list_idx != nprocs);
+            if(bi->free_list_idx != nprocs) {
+                pr_err("block_info's free_list_idx error: 3\n");
+            }
             while (!spin_trylock(free_blocks_list_locks + nproc)) {
                 msleep(10);
             }
