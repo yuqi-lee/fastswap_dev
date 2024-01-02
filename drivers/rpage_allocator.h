@@ -16,6 +16,7 @@
 #define nprocs 128
 #define max_alloc_item 256
 #define max_free_item 512
+#define max_class_free_item 256
 #define class_num 16
 
 struct raddr_rkey{
@@ -33,7 +34,7 @@ struct cpu_cache_storage {
     struct raddr_rkey items[nprocs][max_alloc_item];
     u64 free_items[nprocs][max_free_item];
     struct raddr_rkey class_items[class_num][max_alloc_item];
-    u64 class_free_items[class_num][max_free_item];
+    u64 class_free_items[class_num][max_class_free_item];
 
     u32 reader[nprocs];
     u32 class_reader[class_num];

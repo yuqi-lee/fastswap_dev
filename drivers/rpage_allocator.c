@@ -104,7 +104,7 @@ u32 get_length_fetch(u32 nproc) {
     if (writer > reader) {
         return (writer - reader);
     } else {
-        return (max_item_alloc - reader + writer);
+        return (max_alloc_item - reader + writer);
     }
 }
 
@@ -117,7 +117,7 @@ u32 get_length_free(u32 nproc) {
     if (writer > reader) {
         return (writer - reader);
     } else {
-        return (max_item_free - reader + writer);
+        return (max_free_item - reader + writer);
     }
 }
 
@@ -129,10 +129,10 @@ int fetch_cache(u64 *raddr, u32 *rkey) {
     BUG_ON(nproc > nprocs);
 
     reader = cpu_cache_->reader[nproc];
-    BUG_ON(reader >= max_item_alloc);
+    BUG_ON(reader >= max_alloc_item);
 
     while(get_length_fetch(nproc) == 0) ;
-    cpu_cache_->reader[nproc] = (cpu_cache_->reader[nproc] + 1) % max_item_alloc;
+    cpu_cache_->reader[nproc] = (cpu_cache_->reader[nproc] + 1) % max_alloc_item;
 
     while(cpu_cache_->items[nproc][reader].addr == -1 || cpu_cache_->items[nproc][reader].rkey == -1) ;
     
@@ -155,8 +155,8 @@ void add_free_cache(u64 raddr/*, u32 rkey*/) {
     BUG_ON(nproc > nprocs);
     writer = cpu_cache_->free_writer[nproc];
 
-    if(get_length_free(nproc) < max_item_free - 1) {
-        cpu_cache_->free_writer[nproc] = (cpu_cache_->free_writer[nproc] + 1) % max_item_free;
+    if(get_length_free(nproc) < max_free_item - 1) {
+        cpu_cache_->free_writer[nproc] = (cpu_cache_->free_writer[nproc] + 1) % max_free_item;
     } else {
         return;
     }
