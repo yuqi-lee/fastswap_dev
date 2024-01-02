@@ -17,7 +17,6 @@
 #define max_alloc_item 256
 #define max_free_item 512
 #define class_num 16
-#define max_item 256
 
 struct raddr_rkey{
     u64 addr;
