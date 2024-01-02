@@ -52,6 +52,7 @@ struct block_info{
     u32 rkey;
     spinlock_t block_lock;
     u16 cnt;
+    u32 free_list_idx;
     DECLARE_BITMAP(rpages_bitmap, (rblock_size >> PAGE_SHIFT));
 
     struct rhash_head block_node_rhash;

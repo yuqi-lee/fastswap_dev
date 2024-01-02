@@ -10,6 +10,7 @@
 #include <linux/sched.h>
 #include <linux/vmalloc.h>
 #include <linux/smp.h>
+#include <linux/delay.h>
 
 u32 get_rkey(u64 raddr) {
     struct block_info *bi = NULL;
@@ -191,6 +192,7 @@ int alloc_remote_block(u32 free_list_idx) {
     bi->raddr = raddr_;
     bi->rkey = rkey_;
     bi->cnt = rblock_size >> PAGE_SHIFT;
+    bi->free_list_idx = free_list_idx;
     spin_lock_init(&(bi->block_lock));
     bitmap_zero(bi->rpages_bitmap, rblock_size >> PAGE_SHIFT);
     INIT_LIST_HEAD(&bi->block_node_list);
@@ -210,10 +212,12 @@ EXPORT_SYMBOL(alloc_remote_block);
 
 
 u64 alloc_remote_page(void) {
-    struct block_info *bi;
+    struct block_info *bi, *entry, *next_entry;
     u32 offset;
     u64 raddr;
     int ret;
+    int counter = 0;
+    int flag;
     u32 nproc = raw_smp_processor_id();
 
     spin_lock(free_blocks_list_locks + nproc);
@@ -233,6 +237,8 @@ u64 alloc_remote_page(void) {
         return 0;
     }
 
+    BUG_ON(bi->free_list_idx != nproc);
+
     spin_lock(&bi->block_lock);
     offset = find_first_zero_bit(bi->rpages_bitmap, rblock_size >> PAGE_SHIFT);
     BUG_ON(offset == (rblock_size >> PAGE_SHIFT));
@@ -243,9 +249,27 @@ u64 alloc_remote_page(void) {
 
     if(bi->cnt == 0) {
         list_del(&bi->block_node_list);
+        bi->free_list_idx = nprocs;
     }
 
     spin_unlock(&bi->block_lock);
+
+    counter = 0;
+    list_for_each_entry_safe(entry, next_entry, free_blocks_lists + nproc, block_node_list) {
+        spin_lock(&entry->block_lock);
+        BUG_ON(bi->free_list_idx != nproc);
+        flag = 0;
+        if(entry->cnt == (rblock_size >> PAGE_SHIFT)) {
+            counter++;
+            if(counter > 1) {
+                free_remote_block(entry);
+                flag = 1;
+            }
+        }
+        if(flag == 0) {
+            spin_unlock(&entry->block_lock);
+        }
+    }
     spin_unlock(free_blocks_list_locks + nproc);
 
     raddr = bi->raddr + (offset << PAGE_SHIFT);
@@ -272,7 +296,7 @@ void free_remote_page(u64 raddr) {
     BUG_ON(raddr_block != bi->raddr);
     BUG_ON(raddr < bi->raddr);
 
-    spin_lock(free_blocks_list_locks + nproc);
+    //spin_lock(free_blocks_list_locks + nproc);
     spin_lock(&bi->block_lock);
 
     offset = (raddr - bi->raddr) >> PAGE_SHIFT;
@@ -282,12 +306,19 @@ void free_remote_page(u64 raddr) {
         clear_bit(offset, bi->rpages_bitmap);
 
         bi->cnt += 1;
-        if(bi->cnt == (rblock_size >> PAGE_SHIFT)) {
-            free_remote_block(bi);
-            spin_unlock(free_blocks_list_locks + nproc);
-            return; // no need to release block's lock
-        } else if(bi->cnt == 1) {
+        //if(bi->cnt == (rblock_size >> PAGE_SHIFT)) {
+        //    free_remote_block(bi);
+        //    spin_unlock(free_blocks_list_locks + nproc);
+        //    return; // no need to release block's lock
+        //} else if(bi->cnt == 1) {
+        if(bi->cnt == 1) {
+            BUG_ON(bi->free_list_idx != nprocs);
+            while (!spin_trylock(free_blocks_list_locks + nproc)) {
+                msleep(10);
+            }
+            bi->free_list_idx = nproc;
             list_add(&bi->block_node_list, free_blocks_lists + nproc);
+            spin_unlock(free_blocks_list_locks + nproc);
         }
     }
     else {
@@ -297,7 +328,7 @@ void free_remote_page(u64 raddr) {
     }
 
     spin_unlock(&bi->block_lock);
-    spin_unlock(free_blocks_list_locks + nproc);
+    //spin_unlock(free_blocks_list_locks + nproc);
 }
 EXPORT_SYMBOL(free_remote_page);
 
