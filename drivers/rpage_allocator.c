@@ -12,6 +12,15 @@
 #include <linux/smp.h>
 #include <linux/delay.h>
 
+atomic_t num_alloc_blocks = ATOMIC_INIT(0);
+EXPORT_SYMBOL(num_alloc_blocks);
+
+atomic_t num_free_blocks = ATOMIC_INIT(0);
+EXPORT_SYMBOL(num_free_blocks);
+
+atomic_t num_free_fail = ATOMIC_INIT(0);
+EXPORT_SYMBOL(num_free_fail);
+
 u32 get_rkey(u64 raddr) {
     struct block_info *bi = NULL;
     
@@ -159,6 +168,7 @@ void add_free_cache(u64 raddr/*, u32 rkey*/) {
     if(get_length_free(nproc) < max_free_item - 1) {
         cpu_cache_->free_writer[nproc] = (cpu_cache_->free_writer[nproc] + 1) % max_free_item;
     } else {
+        atomic_inc(&num_free_fail);
         return;
     }
  
@@ -205,6 +215,7 @@ int alloc_remote_block(u32 free_list_idx) {
     list_add(&bi->block_node_list, free_blocks_lists + free_list_idx);
     //spin_unlock(&free_blocks_list_lock);
 
+    atomic_inc(&num_alloc_blocks);
     return 0;
 }
 EXPORT_SYMBOL(alloc_remote_block);
@@ -212,34 +223,52 @@ EXPORT_SYMBOL(alloc_remote_block);
 
 
 u64 alloc_remote_page(void) {
-    struct block_info *bi, *entry, *next_entry;
+    struct block_info *bi/*, *entry, *next_entry*/;
     u32 offset;
     u64 raddr;
     int ret;
-    int counter = 0;
-    int flag;
+    //int counter = 0;
+    //int flag;
     u32 nproc = raw_smp_processor_id();
+    u32 free_list_idx = nproc % num_free_lists;
+    u32 raw_free_list_idx = free_list_idx;
+    u8 locked = 0;
 
-    spin_lock(free_blocks_list_locks + nproc);
-    if(list_empty(free_blocks_lists + nproc)) {
-        ret = alloc_remote_block(nproc);
+    do{
+        if(spin_trylock(free_blocks_list_locks + free_list_idx)) {
+            if(!list_empty(free_blocks_lists + free_list_idx)) {
+                locked = 1;
+                break;
+            } else {
+                spin_unlock(free_blocks_list_locks + free_list_idx);
+            }
+        } 
+        free_list_idx = (free_list_idx + 1) % num_free_lists;
+    }while(free_list_idx != raw_free_list_idx);
+
+    if(locked == 0) {
+        spin_lock(free_blocks_list_locks + free_list_idx);
+    }
+
+    if(list_empty(free_blocks_lists + free_list_idx)) {
+        ret = alloc_remote_block(free_list_idx);
         if(ret) {
             pr_err("cannot fetch a block from cache.\n");
-            spin_unlock(free_blocks_list_locks + nproc);
+            spin_unlock(free_blocks_list_locks + free_list_idx);
             return 0;
         }
     }
 
-    bi = list_first_entry(free_blocks_lists + nproc, struct block_info, block_node_list);
+    bi = list_first_entry(free_blocks_lists + free_list_idx, struct block_info, block_node_list);
     if(!bi) {
         pr_err("fail to add new block to free_blocks_list\n");
-        spin_unlock(free_blocks_list_locks + nproc);
+        spin_unlock(free_blocks_list_locks + free_list_idx);
         return 0;
     }
 
-    //BUG_ON(bi->free_list_idx != nproc);
-    if(bi->free_list_idx != nproc) {
-        pr_err("block_info's free_list_idx error: 1\n");
+    //BUG_ON(bi->free_list_idx != free_list_idx);
+    if(bi->free_list_idx != free_list_idx) {
+        pr_err("block_info's free_list_idx error: 2\n");
     }
 
     spin_lock(&bi->block_lock);
@@ -252,18 +281,19 @@ u64 alloc_remote_page(void) {
 
     if(bi->cnt == 0) {
         list_del(&bi->block_node_list);
-        bi->free_list_idx = nprocs;
+        bi->free_list_idx = num_free_lists;
     }
 
     spin_unlock(&bi->block_lock);
 
+    /*
     counter = 0;
     list_for_each_entry_safe(entry, next_entry, free_blocks_lists + nproc, block_node_list) {
         spin_lock(&entry->block_lock);
-        //BUG_ON(bi->free_list_idx != nproc);
-        if(bi->free_list_idx != nproc) {
-            pr_err("block_info's free_list_idx error: 2\n");
-        }
+        BUG_ON(entry->free_list_idx != nproc);
+        //if(entry->free_list_idx != nproc) {
+        //    pr_err("block_info's free_list_idx error: 2\n");
+        //}
         flag = 0;
         if(entry->cnt == (rblock_size >> PAGE_SHIFT)) {
             counter++;
@@ -275,8 +305,8 @@ u64 alloc_remote_page(void) {
         if(flag == 0) {
             spin_unlock(&entry->block_lock);
         }
-    }
-    spin_unlock(free_blocks_list_locks + nproc);
+    }*/
+    spin_unlock(free_blocks_list_locks + free_list_idx);
 
     raddr = bi->raddr + (offset << PAGE_SHIFT);
     return raddr;
@@ -288,6 +318,7 @@ void free_remote_page(u64 raddr) {
     u64 raddr_block; 
     u32 offset; 
     u32 nproc = raw_smp_processor_id();
+    u32 free_list_idx = nproc % num_free_lists;
     
     BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
 
@@ -318,16 +349,16 @@ void free_remote_page(u64 raddr) {
         //    return; // no need to release block's lock
         //} else if(bi->cnt == 1) {
         if(bi->cnt == 1) {
-            //BUG_ON(bi->free_list_idx != nprocs);
-            if(bi->free_list_idx != nprocs) {
+            //BUG_ON(bi->free_list_idx != num_free_lists);
+            if(bi->free_list_idx != num_free_lists) {
                 pr_err("block_info's free_list_idx error: 3\n");
             }
-            while (!spin_trylock(free_blocks_list_locks + nproc)) {
+            while (!spin_trylock(free_blocks_list_locks + free_list_idx)) {
                 msleep(10);
             }
-            bi->free_list_idx = nproc;
-            list_add(&bi->block_node_list, free_blocks_lists + nproc);
-            spin_unlock(free_blocks_list_locks + nproc);
+            bi->free_list_idx = free_list_idx;
+            list_add(&bi->block_node_list, free_blocks_lists + free_list_idx);
+            spin_unlock(free_blocks_list_locks + free_list_idx);
         }
     }
     else {
@@ -349,8 +380,37 @@ void free_remote_block(struct block_info *bi) {
     add_free_cache(bi->raddr/*, bi->rkey*/);
 
     kfree(bi);
+
+    atomic_inc(&num_free_blocks);
 }
 EXPORT_SYMBOL(free_remote_block);
+
+void gc_timer_callback(struct timer_list *timer) {
+  struct block_info *entry, *next_entry;  
+  u32 counter = 0;
+  int i;
+
+  for(i = 0;i < num_free_lists; ++i) {
+    if(spin_trylock(free_blocks_list_locks + i)) {
+        list_for_each_entry_safe(entry, next_entry, free_blocks_lists + i, block_node_list) {
+            spin_lock(&entry->block_lock);
+            //BUG_ON(entry->free_list_idx != i);
+            if(entry->free_list_idx != i) {
+                pr_err("entry's free list idx error: 1\n");
+            }
+            if(entry->cnt == (rblock_size >> PAGE_SHIFT)) {
+                counter++;
+                free_remote_block(entry);
+                continue;
+            }
+            spin_unlock(&entry->block_lock);
+        }
+        spin_unlock(free_blocks_list_locks + i);
+    }
+  }
+
+  mod_timer(timer, jiffies + msecs_to_jiffies(rblock_gc_interval)); 
+}
 
 static int __init rpage_allocator_init_module(void) {
     int ret = 0;
@@ -372,10 +432,13 @@ static int __init rpage_allocator_init_module(void) {
 
     rhashtable_init(blocks_map, &blocks_map_params);
 
-    for(i = 0; i < nprocs ; ++i) {
+    for(i = 0; i < num_free_lists ; ++i) {
         INIT_LIST_HEAD(free_blocks_lists + i);
         spin_lock_init(free_blocks_list_locks + i);
     }
+
+    timer_setup(&gc_timer, gc_timer_callback, 0);
+    mod_timer(&gc_timer, jiffies + msecs_to_jiffies(rblock_gc_interval));
 
     return 0;
 }

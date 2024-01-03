@@ -15,9 +15,16 @@
 // u32 num_cpus = num_online_cpus();
 #define nprocs 128
 #define max_alloc_item 256
-#define max_free_item 512
-#define max_class_free_item 256
+#define max_free_item 1024
+#define max_class_free_item 512
 #define class_num 16
+#define rblock_gc_interval 500
+#define num_free_lists 8
+
+extern atomic_t num_alloc_blocks;
+extern atomic_t num_free_blocks;
+extern atomic_t num_free_fail;
+
 
 struct raddr_rkey{
     u64 addr;
@@ -69,10 +76,11 @@ struct rhashtable_params blocks_map_params = {
 };
 
 struct rhashtable *blocks_map = NULL;
-struct list_head free_blocks_lists[nprocs];
-spinlock_t free_blocks_list_locks[nprocs];
+struct list_head free_blocks_lists[num_free_lists];
+spinlock_t free_blocks_list_locks[num_free_lists];
 
 struct cpu_cache_storage *cpu_cache_ = NULL;
+struct timer_list gc_timer;
 
 int cpu_cache_init(void);
 void cpu_cache_dump(void);

@@ -938,8 +938,12 @@ inline struct rdma_queue *sswap_rdma_get_queue(unsigned int cpuid,
 
 void swap_pages_timer_callback(struct timer_list *timer) {
   int num_swap_pages_tmp = atomic_read(&num_swap_pages);
-  pr_info("num_swap_pages = %d, swap memory = %d MB, page size = %d\n", num_swap_pages_tmp, (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), (1 << PAGE_SHIFT));
-  
+  int num_alloc_blocks_tmp = atomic_read(&num_alloc_blocks);
+  int num_free_blocks_tmp = atomic_read(&num_free_blocks);
+  int num_free_fail_tmp = atomic_read(&num_free_fail);
+
+  pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
+  pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
   mod_timer(timer, jiffies + msecs_to_jiffies(swap_pages_print_interval)); 
 }
 
