@@ -15,7 +15,7 @@
 // u32 num_cpus = num_online_cpus();
 #define nprocs 128
 #define max_alloc_item 256
-#define max_free_item 1024
+#define max_free_item 5120
 #define max_class_free_item 512
 #define class_num 16
 #define rblock_gc_interval 500

@@ -235,6 +235,7 @@ u64 alloc_remote_page(void) {
     u8 locked = 0;
 
     do{
+        /*
         if(spin_trylock(free_blocks_list_locks + free_list_idx)) {
             if(!list_empty(free_blocks_lists + free_list_idx)) {
                 locked = 1;
@@ -242,7 +243,14 @@ u64 alloc_remote_page(void) {
             } else {
                 spin_unlock(free_blocks_list_locks + free_list_idx);
             }
-        } 
+        } */
+        spin_lock(free_blocks_list_locks + free_list_idx);
+        if(!list_empty(free_blocks_lists + free_list_idx)) {
+            locked = 1;
+            break;
+        } else {
+            spin_unlock(free_blocks_list_locks + free_list_idx);
+        }
         free_list_idx = (free_list_idx + 1) % num_free_lists;
     }while(free_list_idx != raw_free_list_idx);
 
@@ -353,9 +361,10 @@ void free_remote_page(u64 raddr) {
             if(bi->free_list_idx != num_free_lists) {
                 pr_err("block_info's free_list_idx error: 3\n");
             }
-            while (!spin_trylock(free_blocks_list_locks + free_list_idx)) {
-                msleep(10);
-            }
+            //while (!spin_trylock(free_blocks_list_locks + free_list_idx)) {
+            //    msleep(10);
+            //}
+            spin_lock(free_blocks_list_locks + free_list_idx);
             bi->free_list_idx = free_list_idx;
             list_add(&bi->block_node_list, free_blocks_lists + free_list_idx);
             spin_unlock(free_blocks_list_locks + free_list_idx);
