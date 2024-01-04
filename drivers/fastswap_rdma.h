@@ -19,6 +19,10 @@
 #define num_pages_total  (addr_space >> PAGE_SHIFT)
 #define swap_pages_print_interval 2000
 
+extern atomic_t num_alloc_blocks;
+extern atomic_t num_free_blocks;
+extern atomic_t num_free_fail;
+
 enum qp_type {
   QP_READ_SYNC,
   QP_READ_ASYNC,
