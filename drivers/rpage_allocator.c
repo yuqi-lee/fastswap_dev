@@ -235,7 +235,6 @@ u64 alloc_remote_page(void) {
     u8 locked = 0;
 
     do{
-        /*
         if(spin_trylock(free_blocks_list_locks + free_list_idx)) {
             if(!list_empty(free_blocks_lists + free_list_idx)) {
                 locked = 1;
@@ -243,14 +242,15 @@ u64 alloc_remote_page(void) {
             } else {
                 spin_unlock(free_blocks_list_locks + free_list_idx);
             }
-        } */
+        } 
+        /*
         spin_lock(free_blocks_list_locks + free_list_idx);
         if(!list_empty(free_blocks_lists + free_list_idx)) {
             locked = 1;
             break;
         } else {
             spin_unlock(free_blocks_list_locks + free_list_idx);
-        }
+        }*/
         free_list_idx = (free_list_idx + 1) % num_free_lists;
     }while(free_list_idx != raw_free_list_idx);
 
