@@ -9,6 +9,7 @@
 #include <linux/page-flags.h>
 #include <linux/memcontrol.h>
 #include <linux/smp.h>
+#include <linux/directswap.h>
 
 #define B_DRAM 1
 #define B_RDMA 2
@@ -30,6 +31,13 @@
 static int sswap_store(unsigned type, pgoff_t pageid,
         struct page *page)
 {
+  if(direct_swap_enabled() && is_direct_swap_area(type)) {
+    if(directswap_rdma_write(page, pageid, type)) {
+      pr_err("directswap: could not store page remotely\n");
+      return -1;
+    }
+    return 0;
+  }
   if (sswap_rdma_write(page, pageid/* << PAGE_SHIFT*/)) {
     pr_err("could not store page remotely\n");
     return -1;
@@ -44,6 +52,13 @@ static int sswap_store(unsigned type, pgoff_t pageid,
  */
 static int sswap_load_async(unsigned type, pgoff_t pageid, struct page *page)
 {
+  if(direct_swap_enabled() && is_direct_swap_area(type)) {
+    if(directswap_rdma_read_async(page, pageid, type)) {
+      pr_err("directswap: could not read page remotely\n");
+      return -1;
+    }
+    return 0;
+  }
   if (unlikely(sswap_rdma_read_async(page, pageid /*<< PAGE_SHIFT*/))) {
     pr_err("could not read page remotely\n");
     return -1;
@@ -54,6 +69,13 @@ static int sswap_load_async(unsigned type, pgoff_t pageid, struct page *page)
 
 static int sswap_load(unsigned type, pgoff_t pageid, struct page *page)
 {
+  if(direct_swap_enabled() && is_direct_swap_area(type)) {
+    if(directswap_rdma_read_sync(page, pageid, type)) {
+      pr_err("directswap: could not read page remotely\n");
+      return -1;
+    }
+    return 0;
+  }
   if (unlikely(sswap_rdma_read_sync(page, pageid /*<< PAGE_SHIFT*/))) {
     pr_err("could not read page remotely\n");
     return -1;
@@ -69,8 +91,12 @@ static int sswap_poll_load(int cpu)
 
 static void sswap_invalidate_page(unsigned type, pgoff_t offset)
 {
-  sswap_rdma_free_page(offset /*<< PAGE_SHIFT*/);
-  return;
+  if(direct_swap_enabled() && is_direct_swap_area(type)) {
+    return;
+  } else {
+    sswap_rdma_free_page(offset /*<< PAGE_SHIFT*/);
+    return;
+  }
 }
 
 static void sswap_invalidate_area(unsigned type)

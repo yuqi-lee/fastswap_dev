@@ -13,6 +13,8 @@
 #include <linux/spinlock.h>
 #include <linux/types.h>
 #include <linux/timer.h>
+#include <linux/swap.h>
+#include <linux/directswap.h>
 
 #define num_groups 8
 // #define print_interval (256 * 1024)
@@ -85,12 +87,18 @@ struct timer_list swap_pages_timer;
 atomic_t num_swap_pages = ATOMIC_INIT(0);
 spinlock_t locks[num_groups];
 u64 offset_to_rpage_addr[num_pages_total] = {0};
+u64 *base_address;
+u32 *remote_keys;
+struct kfifo central_heap;
 
 struct rdma_queue *sswap_rdma_get_queue(unsigned int idx, enum qp_type type);
 enum qp_type get_queue_type(unsigned int idx);
 int sswap_rdma_read_async(struct page *page, u64 roffset);
 int sswap_rdma_read_sync(struct page *page, u64 roffset);
 int sswap_rdma_write(struct page *page, u64 roffset);
+int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type);
+int direct_swap_rdma_read_sync(struct page *page, u64 roffset, int type);
+int direct_swap_rdma_write(struct page *page, u64 roffset, int type);
 int sswap_rdma_poll_load(int cpu);
 void sswap_rdma_free_page(u64 roffset);
 

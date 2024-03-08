@@ -27,6 +27,49 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 #define QP_MAX_SEND_WR	(4096)
 #define CQ_NUM_CQES	(QP_MAX_SEND_WR)
 #define POLL_BATCH_HIGH (QP_MAX_SEND_WR / 4)
+#define DAEMON_CORE 31
+
+static struct task_struct *thread;
+
+static int kfifos_daemon() {
+  int i;
+  int count;
+  swp_entry_t entry;
+  while(!kthread_should_stop()) {
+    /*
+    * [DirectSwap] Step1: Recycle freed pages
+    */
+    for(i = 0;i < NUM_KFIFOS_FREE; ++i) {
+      count = 0;
+      while (!kfifo_is_empty(kfifos_free + i) && count < PAGES_PER_KFIFO_FREE) {
+        ret = kfifo_out(kfifos_free + i, &entry, sizeof(entry));
+        if (ret != sizeof(entry)) {
+            printk(KERN_ERR "Failed to read from FIFO\n");
+            break;
+        }
+        kfifo_in(&central_heap, &entry, sizeof(entry));
+        count++;
+      }
+    }
+
+    /*
+    * [DirectSwap] Step2: Fill unused pages
+    */
+    for(i = 0;i < NUM_KFIFOS_ALLOC; ++i) {
+      count = 0;
+      while (!kfifo_is_full(kfifos_alloc + i) && count < PAGES_PER_KFIFO_ALLOC) {
+        kfifo_out(&central_heap, &entry, sizeof(entry));
+        ret = kfifo_in(kfifos_alloc + i, &entry, sizeof(entry));
+        if (ret != sizeof(entry)) {
+            printk(KERN_ERR "Failed to read from FIFO\n");
+            break;
+        }
+        count++;
+      }
+    }
+  }
+  return 0;
+}
 
 static int sswap_rdma_addone(struct ib_device *dev)
 {
@@ -431,6 +474,14 @@ static void __exit sswap_rdma_cleanup_module(void)
   }
 
   del_timer(&swap_pages_timer);
+  kfree(base_address);
+  kfree(remote_keys);
+  if (thread) {
+    kthread_stop(thread);
+  }
+  kfifo_free(&central_heap);
+
+  return;
 }
 
 static void sswap_rdma_write_done(struct ib_cq *cq, struct ib_wc *wc)
@@ -470,7 +521,7 @@ static void sswap_rdma_read_done(struct ib_cq *cq, struct ib_wc *wc)
 }
 
 inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe,
-  struct ib_sge *sge, u64 raddr, /*u32 rkey,*/enum ib_wr_opcode op)
+  struct ib_sge *sge, u64 raddr, u32 rkey, enum ib_wr_opcode op)
 {
   const struct ib_send_wr *bad_wr;
   struct ib_rdma_wr rdma_wr = {};
@@ -502,8 +553,8 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
     //pr_err("cannot get rkey\n");
     //return -1;
   //}
-  rdma_wr.rkey = get_rkey(raddr_block);
-  //rdma_wr.rkey = rkey;
+  //rdma_wr.rkey = get_rkey(raddr_block);
+  rdma_wr.rkey = rkey;
   if(rdma_wr.rkey == 0) {
     pr_err("remote address(%p) is invalid.\n", (void*)raddr);
     return -1;
@@ -670,7 +721,7 @@ static inline int drain_queue(struct rdma_queue *q)
 }
 
 static inline int write_queue_add(struct rdma_queue *q, struct page *page,
-				  u64 roffset/*, u32 rkey*/)
+				  u64 roffset, u32 rkey)
 {
   struct rdma_req *req;
   struct ib_device *dev = q->ctrl->rdev->dev;
@@ -688,13 +739,13 @@ static inline int write_queue_add(struct rdma_queue *q, struct page *page,
     return ret;
 
   req->cqe.done = sswap_rdma_write_done;
-  ret = sswap_rdma_post_rdma(q, req, &sge, roffset, /*rkey,*/IB_WR_RDMA_WRITE);
+  ret = sswap_rdma_post_rdma(q, req, &sge, roffset, rkey, IB_WR_RDMA_WRITE);
 
   return ret;
 }
 
 static inline int begin_read(struct rdma_queue *q, struct page *page,
-			     u64 roffset/*, u32 rkey*/)
+			     u64 roffset, u32 rkey)
 {
   struct rdma_req *req;
   struct ib_device *dev = q->ctrl->rdev->dev;
@@ -714,7 +765,7 @@ static inline int begin_read(struct rdma_queue *q, struct page *page,
     return ret;
 
   req->cqe.done = sswap_rdma_read_done;
-  ret = sswap_rdma_post_rdma(q, req, &sge, roffset/*, rkey*/,IB_WR_RDMA_READ);
+  ret = sswap_rdma_post_rdma(q, req, &sge, roffset, rkey,IB_WR_RDMA_READ);
   return ret;
 }
 
@@ -726,7 +777,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   u64 page_offset = roffset;
   u64 raddr = offset_to_rpage_addr[page_offset];
   //u64 raddr_block = 0;
-  //u32 rkey = 0;
+  u32 rkey = get_rkey((roffset >> BLOCK_SHIFT) << BLOCK_SHIFT);
 
   BUG_ON(roffset >= num_pages_total);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
@@ -762,7 +813,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
     //pr_err("read_async:remote address(%p) is invalid.\n", (void*)raddr);
     //return -1;
   //}
-  ret = write_queue_add(q, page, raddr/*, rkey*/);
+  ret = write_queue_add(q, page, raddr, rkey);
   BUG_ON(ret);
   drain_queue(q);
 
@@ -815,8 +866,8 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int ret;
   u64 raddr = offset_to_rpage_addr[roffset];
-  //u64 raddr_block;
-  //u32 rkey = 0;
+  u64 raddr_block;
+  u32 rkey = 0;
 
   BUG_ON(roffset >= num_pages_total);
   BUG_ON(raddr == 0);
@@ -827,14 +878,14 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
   
-  //raddr_block = raddr >> BLOCK_SHIFT;
-  //raddr_block = raddr_block << BLOCK_SHIFT;
-  //rkey = get_rkey(raddr_block);
-  //if(rkey == 0) {
-    //pr_err("read_async:remote address(%p) is invalid.\n", (void*)raddr);
-    //return -1;
-  //}
-  ret = begin_read(q, page, raddr/*, rkey*/);
+  raddr_block = raddr >> BLOCK_SHIFT;
+  raddr_block = raddr_block << BLOCK_SHIFT;
+  rkey = get_rkey(raddr_block);
+  if(rkey == 0) {
+    pr_err("read_async:remote address(%p) is invalid.\n", (void*)raddr);
+    return -1;
+  }
+  ret = begin_read(q, page, raddr, rkey);
 
 
   return ret;
@@ -873,8 +924,8 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int ret;
   u64 raddr = offset_to_rpage_addr[roffset];
-  //u64 raddr_block;
-  //u32 rkey = 0;
+  u64 raddr_block;
+  u32 rkey = 0;
 
   BUG_ON(raddr == 0);
   BUG_ON(roffset >= num_pages_total);
@@ -884,14 +935,14 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
-  //raddr_block = raddr >> BLOCK_SHIFT;
-  //raddr_block = raddr_block << BLOCK_SHIFT;
-  //rkey = get_rkey(raddr_block);
-  //if(rkey == 0) {
-    //pr_err("read_sync:remote address(%p) is invalid.\n", (void*)raddr);
-    //return -1;
-  //}
-  ret = begin_read(q, page, raddr/*, rkey*/);
+  raddr_block = raddr >> BLOCK_SHIFT;
+  raddr_block = raddr_block << BLOCK_SHIFT;
+  rkey = get_rkey(raddr_block);
+  if(rkey == 0) {
+    pr_err("read_sync:remote address(%p) is invalid.\n", (void*)raddr);
+    return -1;
+  }
+  ret = begin_read(q, page, raddr, rkey);
 
   return ret;
 }
@@ -903,6 +954,41 @@ int sswap_rdma_poll_load(int cpu)
   return drain_queue(q);
 }
 EXPORT_SYMBOL(sswap_rdma_poll_load);
+
+int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type) {
+  int id = remote_area_id(type);
+  u64 raddr = base_address[id] + roffset << PAGE_SHIFT;
+  U32 rkey = remote_keys[id];
+  q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
+  ret = begin_read(q, page, raddr, rkey);
+
+  return ret;
+}
+EXPORT_SYMBOL(direct_swap_rdma_read_async);
+
+int direct_swap_rdma_read_sync(struct page *page, u64 roffset, int type) {
+  int id = remote_area_id(type);
+  u64 raddr = base_address[id] + roffset << PAGE_SHIFT;
+  U32 rkey = remote_keys[id];
+  q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
+  ret = begin_read(q, page, raddr, rkey);
+
+  return ret;
+}
+EXPORT_SYMBOL(direct_swap_rdma_read_sync);
+
+int direct_swap_rdma_write(struct page *page, u64 roffset, int type) {
+  int id = remote_area_id(type);
+  u64 raddr = base_address[id] + roffset << PAGE_SHIFT;
+  U32 rkey = remote_keys[id];
+  q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
+  ret = write_queue_add(q, page, raddr, rkey);
+  
+  //BUG_ON(ret);
+  drain_queue(q);
+  return ret;
+}
+EXPORT_SYMBOL(direct_swap_rdma_write);
 
 /* idx is absolute id (i.e. > than number of cpus) */
 inline enum qp_type get_queue_type(unsigned int idx)
@@ -1004,6 +1090,26 @@ static int sswap_rdma_write_read_test(void)
   return 0;
 }*/
 
+static int central_heap_init(void)
+{
+  int i, ret;
+  swp_entry_t entry;
+
+  base_address[0] = ctrl->servermr.baseaddr;
+  remote_keys[0] = ctrl->server.key;
+  ret = kfifo_alloc(&central_heap, sizeof(swp_entry)*num_pages_total, GFP_KERNEL);
+	if(unlikely(ret)) {
+		pr_err("Alloc memory for kfifos_alloc failed with error code %d.", ret);
+    return ret;
+	}
+
+  for(i = 0;i < addr_space >> PAGE_SHIFT; ++i) {
+    entry = swp_entry(MAX_SWAPFILES - 1, i);
+    kfifo_in(&central_heap, &entry, sizeof(swp_entry_t));
+  }
+  return 0;
+}
+
 static int __init sswap_rdma_init_module(void)
 {
   int ret;
@@ -1055,6 +1161,20 @@ static int __init sswap_rdma_init_module(void)
 
   timer_setup(&swap_pages_timer, swap_pages_timer_callback, 0);
   mod_timer(&swap_pages_timer, jiffies + msecs_to_jiffies(swap_pages_print_interval));
+
+  base_address = (u64 *)kmalloc(sizeof(u64) * NUM_REMOTE_SWAP_AREA, GFP_KERNEL);
+  remote_keys = (u32 *)kmalloc(sizeof(u32) * NUM_REMOTE_SWAP_AREA, GFP_KERNEL);
+
+  central_heap_init();
+
+  thread = kthread_create(my_function, NULL, "my_thread");
+  if (IS_ERR(thread)) {
+    printk(KERN_ERR "Failed to create kernel thread\n");
+    return PTR_ERR(thread);
+  }
+  kthread_bind(thread, DAEMON_CORE);
+  wake_up_process(thread);
+
 
   pr_info("ctrl is ready for reqs\n");
   return 0;
