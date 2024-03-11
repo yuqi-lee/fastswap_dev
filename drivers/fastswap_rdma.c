@@ -31,9 +31,10 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 
 static struct task_struct *thread;
 
-static int kfifos_daemon() {
+static int kfifos_daemon(void* data) {
   int i;
   int count;
+  int ret;
   swp_entry_t entry;
   while(!kthread_should_stop()) {
     /*
@@ -58,12 +59,12 @@ static int kfifos_daemon() {
     for(i = 0;i < NUM_KFIFOS_ALLOC; ++i) {
       count = 0;
       while (!kfifo_is_full(kfifos_alloc + i) && count < PAGES_PER_KFIFO_ALLOC) {
-        kfifo_out(&central_heap, &entry, sizeof(entry));
-        ret = kfifo_in(kfifos_alloc + i, &entry, sizeof(entry));
+        ret = kfifo_out(&central_heap, &entry, sizeof(entry));
         if (ret != sizeof(entry)) {
             printk(KERN_ERR "Failed to read from FIFO\n");
             break;
         }
+        kfifo_in(kfifos_alloc + i, &entry, sizeof(entry));
         count++;
       }
     }
@@ -569,7 +570,6 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   return ret;
 }
 
-/*
 static void sswap_rdma_recv_remotemr_done(struct ib_cq *cq, struct ib_wc *wc)
 {
   struct rdma_req *qe =
@@ -588,9 +588,9 @@ static void sswap_rdma_recv_remotemr_done(struct ib_cq *cq, struct ib_wc *wc)
 	  ctrl->servermr.key);
   complete_all(&qe->done);
 }
-*/
 
-/*
+
+
 static int sswap_rdma_post_recv(struct rdma_queue *q, struct rdma_req *qe,
   size_t bufsize)
 {
@@ -614,7 +614,7 @@ static int sswap_rdma_post_recv(struct rdma_queue *q, struct rdma_req *qe,
   }
   return ret;
 }
-*/
+
 
 /* allocates a sswap rdma request, creates a dma mapping for it in
  * req->dma, and synchronizes the dma mapping in the direction of
@@ -821,14 +821,16 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 }
 EXPORT_SYMBOL(sswap_rdma_write);
 
+/*
 static int sswap_rdma_recv_remotemr_fake(struct sswap_rdma_ctrl *ctrl)
 {
   ctrl->servermr.baseaddr = 0;
   ctrl->servermr.key = 0;
   return 0;
 }
+*/
 
-/*
+
 static int sswap_rdma_recv_remotemr(struct sswap_rdma_ctrl *ctrl)
 {
   struct rdma_req *qe;
@@ -857,7 +859,6 @@ out_free_qe:
 out:
   return ret;
 }
-*/
 
 /* page is unlocked when the wr is done.
  * posts an RDMA read on this cpu's qp */
@@ -956,9 +957,11 @@ int sswap_rdma_poll_load(int cpu)
 EXPORT_SYMBOL(sswap_rdma_poll_load);
 
 int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type) {
+  struct rdma_queue *q;
   int id = remote_area_id(type);
-  u64 raddr = base_address[id] + roffset << PAGE_SHIFT;
-  U32 rkey = remote_keys[id];
+  u64 raddr = base_address[id] + (roffset << PAGE_SHIFT);
+  u32 rkey = remote_keys[id];
+  int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
   ret = begin_read(q, page, raddr, rkey);
 
@@ -967,9 +970,11 @@ int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type) {
 EXPORT_SYMBOL(direct_swap_rdma_read_async);
 
 int direct_swap_rdma_read_sync(struct page *page, u64 roffset, int type) {
+  struct rdma_queue *q;
   int id = remote_area_id(type);
-  u64 raddr = base_address[id] + roffset << PAGE_SHIFT;
-  U32 rkey = remote_keys[id];
+  u64 raddr = base_address[id] + (roffset << PAGE_SHIFT);
+  u32 rkey = remote_keys[id];
+  int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
   ret = begin_read(q, page, raddr, rkey);
 
@@ -978,9 +983,11 @@ int direct_swap_rdma_read_sync(struct page *page, u64 roffset, int type) {
 EXPORT_SYMBOL(direct_swap_rdma_read_sync);
 
 int direct_swap_rdma_write(struct page *page, u64 roffset, int type) {
+  struct rdma_queue *q;
   int id = remote_area_id(type);
-  u64 raddr = base_address[id] + roffset << PAGE_SHIFT;
-  U32 rkey = remote_keys[id];
+  u64 raddr = base_address[id] + (roffset << PAGE_SHIFT);
+  u32 rkey = remote_keys[id];
+  int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
   ret = write_queue_add(q, page, raddr, rkey);
   
@@ -1095,8 +1102,8 @@ static int central_heap_init(void)
   int i, ret;
   swp_entry_t entry;
 
-  base_address[0] = ctrl->servermr.baseaddr;
-  remote_keys[0] = ctrl->server.key;
+  base_address[0] = gctrl->servermr.baseaddr;
+  remote_keys[0] = gctrl->servermr.key;
   ret = kfifo_alloc(&central_heap, sizeof(swp_entry)*num_pages_total, GFP_KERNEL);
 	if(unlikely(ret)) {
 		pr_err("Alloc memory for kfifos_alloc failed with error code %d.", ret);
@@ -1137,7 +1144,7 @@ static int __init sswap_rdma_init_module(void)
     return -ENODEV;
   }
 
-  ret = sswap_rdma_recv_remotemr_fake(gctrl);
+  ret = sswap_rdma_recv_remotemr(gctrl);
   if (ret) {
     pr_err("could not setup remote memory region\n");
     ib_unregister_client(&sswap_rdma_ib_client);
@@ -1167,7 +1174,7 @@ static int __init sswap_rdma_init_module(void)
 
   central_heap_init();
 
-  thread = kthread_create(my_function, NULL, "my_thread");
+  thread = kthread_create(kfifos_daemon, NULL, "directswap_kfifos_daemon");
   if (IS_ERR(thread)) {
     printk(KERN_ERR "Failed to create kernel thread\n");
     return PTR_ERR(thread);

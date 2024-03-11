@@ -32,7 +32,7 @@ static int sswap_store(unsigned type, pgoff_t pageid,
         struct page *page)
 {
   if(direct_swap_enabled() && is_direct_swap_area(type)) {
-    if(directswap_rdma_write(page, pageid, type)) {
+    if(direct_swap_rdma_write(page, pageid, type)) {
       pr_err("directswap: could not store page remotely\n");
       return -1;
     }
@@ -53,7 +53,7 @@ static int sswap_store(unsigned type, pgoff_t pageid,
 static int sswap_load_async(unsigned type, pgoff_t pageid, struct page *page)
 {
   if(direct_swap_enabled() && is_direct_swap_area(type)) {
-    if(directswap_rdma_read_async(page, pageid, type)) {
+    if(direct_swap_rdma_read_async(page, pageid, type)) {
       pr_err("directswap: could not read page remotely\n");
       return -1;
     }
@@ -70,7 +70,7 @@ static int sswap_load_async(unsigned type, pgoff_t pageid, struct page *page)
 static int sswap_load(unsigned type, pgoff_t pageid, struct page *page)
 {
   if(direct_swap_enabled() && is_direct_swap_area(type)) {
-    if(directswap_rdma_read_sync(page, pageid, type)) {
+    if(direct_swap_rdma_read_sync(page, pageid, type)) {
       pr_err("directswap: could not read page remotely\n");
       return -1;
     }

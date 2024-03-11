@@ -14,6 +14,7 @@
 #include <linux/types.h>
 #include <linux/timer.h>
 #include <linux/swap.h>
+#include <linux/swapops.h>
 #include <linux/directswap.h>
 
 #define num_groups 8
