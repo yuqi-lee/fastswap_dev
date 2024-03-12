@@ -42,13 +42,16 @@ static int kfifos_daemon(void* data) {
     */
     for(i = 0;i < NUM_KFIFOS_FREE; ++i) {
       count = 0;
-      while (!kfifo_is_empty(kfifos_free + i) && count < PAGES_PER_KFIFO_FREE) {
+      while (!kfifo_is_empty(kfifos_free + i) && !kfifo_is_full(&central_heap) && count < PAGES_PER_KFIFO_FREE) {
         ret = kfifo_out(kfifos_free + i, &entry, sizeof(entry));
         if (ret != sizeof(entry)) {
-            printk(KERN_ERR "Failed to read from FIFO\n");
-            break;
+          printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 1);
+          break;
         }
-        kfifo_in(&central_heap, &entry, sizeof(entry));
+        while(!kfifo_in(&central_heap, &entry, sizeof(entry))) {
+          count++;
+        }
+        
         count++;
       }
     }
@@ -58,13 +61,15 @@ static int kfifos_daemon(void* data) {
     */
     for(i = 0;i < NUM_KFIFOS_ALLOC; ++i) {
       count = 0;
-      while (!kfifo_is_full(kfifos_alloc + i) && count < PAGES_PER_KFIFO_ALLOC) {
+      while (!kfifo_is_full(kfifos_alloc + i) && !kfifo_is_empty(&central_heap) && count < PAGES_PER_KFIFO_ALLOC) {
         ret = kfifo_out(&central_heap, &entry, sizeof(entry));
         if (ret != sizeof(entry)) {
-            printk(KERN_ERR "Failed to read from FIFO\n");
+            printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 2);
             break;
         }
-        kfifo_in(kfifos_alloc + i, &entry, sizeof(entry));
+        while(!kfifo_in(kfifos_alloc + i, &entry, sizeof(entry))) {
+          count++;
+        }
         count++;
       }
     }
@@ -993,6 +998,9 @@ int direct_swap_rdma_write(struct page *page, u64 roffset, int type) {
   
   //BUG_ON(ret);
   drain_queue(q);
+  if(!ret) {
+    atomic_inc(&num_direct_swap_pages);
+  }
   return ret;
 }
 EXPORT_SYMBOL(direct_swap_rdma_write);
@@ -1034,9 +1042,11 @@ void swap_pages_timer_callback(struct timer_list *timer) {
   int num_alloc_blocks_tmp = atomic_read(&num_alloc_blocks);
   int num_free_blocks_tmp = atomic_read(&num_free_blocks);
   int num_free_fail_tmp = atomic_read(&num_free_fail);
+  int num_direct_swap_pages_tmp = atomic_read(&num_direct_swap_pages);
 
   pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
   pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
+  pr_info("num_direct_swap_pages = %d\n", num_direct_swap_pages_tmp);
   mod_timer(timer, jiffies + msecs_to_jiffies(swap_pages_print_interval)); 
 }
 
@@ -1110,7 +1120,7 @@ static int central_heap_init(void)
     return ret;
 	}
 
-  for(i = 0;i < addr_space >> PAGE_SHIFT; ++i) {
+  for(i = 0;i < (addr_space >> PAGE_SHIFT); ++i) {
     entry = swp_entry(MAX_SWAPFILES - 1, i);
     kfifo_in(&central_heap, &entry, sizeof(swp_entry_t));
   }

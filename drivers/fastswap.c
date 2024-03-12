@@ -38,7 +38,7 @@ static int sswap_store(unsigned type, pgoff_t pageid,
     }
     return 0;
   }
-  if (sswap_rdma_write(page, pageid/* << PAGE_SHIFT*/)) {
+  if (1 /*sswap_rdma_write(page, pageid )*/) {
     pr_err("could not store page remotely\n");
     return -1;
   }
@@ -59,7 +59,7 @@ static int sswap_load_async(unsigned type, pgoff_t pageid, struct page *page)
     }
     return 0;
   }
-  if (unlikely(sswap_rdma_read_async(page, pageid /*<< PAGE_SHIFT*/))) {
+  if (1 /*unlikely(sswap_rdma_read_async(page, pageid ))*/) {
     pr_err("could not read page remotely\n");
     return -1;
   }
@@ -76,7 +76,7 @@ static int sswap_load(unsigned type, pgoff_t pageid, struct page *page)
     }
     return 0;
   }
-  if (unlikely(sswap_rdma_read_sync(page, pageid /*<< PAGE_SHIFT*/))) {
+  if (1 /*unlikely(sswap_rdma_read_sync(page, pageid ))*/) {
     pr_err("could not read page remotely\n");
     return -1;
   }
@@ -94,7 +94,7 @@ static void sswap_invalidate_page(unsigned type, pgoff_t offset)
   if(direct_swap_enabled() && is_direct_swap_area(type)) {
     return;
   } else {
-    sswap_rdma_free_page(offset /*<< PAGE_SHIFT*/);
+    /*sswap_rdma_free_page(offset );*/
     return;
   }
 }

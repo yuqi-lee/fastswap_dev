@@ -425,13 +425,13 @@ static int __init rpage_allocator_init_module(void) {
     int ret = 0;
     int i = 0;
 
-    ret = cpu_cache_init();
+    //ret = cpu_cache_init();
     if (ret) {
         pr_err("cpu cache init failed\n");
         return ret;
     }
 
-    cpu_cache_dump();
+    //cpu_cache_dump();
 
     blocks_map = kmalloc(sizeof(struct rhashtable), GFP_KERNEL);
     if (!blocks_map) {
@@ -453,7 +453,7 @@ static int __init rpage_allocator_init_module(void) {
 }
 
 static void __exit rpage_allocator_cleanup_module(void) {
-    cpu_cache_delete();
+    //cpu_cache_delete();
     kfree(blocks_map);
 }
 
