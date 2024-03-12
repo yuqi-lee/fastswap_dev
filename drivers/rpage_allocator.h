@@ -6,7 +6,7 @@
 #include <linux/rhashtable.h>
 #include <linux/module.h>
 
-#define addr_space (1024 * 1024 * 1024 * 200l)
+#define addr_space (1024 * 1024 * 1024 * 32l)
 #define rblock_size (4 * 1024 * 1024)
 #define max_block_num (addr_space / rblock_size)
 #define BLOCK_SHIFT 22
