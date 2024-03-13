@@ -91,7 +91,8 @@ spinlock_t locks[num_groups];
 u64 offset_to_rpage_addr[num_pages_total] = {0};
 u64 *base_address;
 u32 *remote_keys;
-struct kfifo central_heap;
+//struct kfifo central_heap;
+char central_heap[num_pages_total] = {'F'};
 
 struct rdma_queue *sswap_rdma_get_queue(unsigned int idx, enum qp_type type);
 enum qp_type get_queue_type(unsigned int idx);

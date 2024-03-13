@@ -4,6 +4,7 @@
 #include <linux/slab.h>
 #include <linux/cpumask.h> 
 #include <linux/delay.h>
+#include <linux/directswap.h>
 
 static struct sswap_rdma_ctrl *gctrl;
 static int serverport;
@@ -32,25 +33,30 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 static struct task_struct *thread;
 
 static int kfifos_daemon(void* data) {
-  int i;
-  int count;
-  int ret;
+  int i, count, ret, idx, offset;
   swp_entry_t entry;
+  idx = 0;
   while(!kthread_should_stop()) {
     /*
     * [DirectSwap] Step1: Recycle freed pages
     */
     for(i = 0;i < NUM_KFIFOS_FREE; ++i) {
       count = 0;
-      while (!kfifo_is_empty(kfifos_free + i) && !kfifo_is_full(&central_heap) && count < PAGES_PER_KFIFO_FREE) {
+      while (!kfifo_is_empty(kfifos_free + i) /*&& !kfifo_is_full(&central_heap)*/ && count < PAGES_PER_KFIFO_FREE) {
         ret = kfifo_out(kfifos_free + i, &entry, sizeof(entry));
         if (ret != sizeof(entry)) {
           printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 1);
           break;
         }
+        
+        offset = swp_offset(entry);
+        BUG_ON(offset >= num_pages_total);
+        BUG_ON(central_heap[offset] != 'U');
+        central_heap[offset] = 'F';
+        /*
         while(!kfifo_in(&central_heap, &entry, sizeof(entry))) {
           count++;
-        }
+        }*/
         
         count++;
       }
@@ -61,15 +67,21 @@ static int kfifos_daemon(void* data) {
     */
     for(i = 0;i < NUM_KFIFOS_ALLOC; ++i) {
       count = 0;
-      while (!kfifo_is_full(kfifos_alloc + i) && !kfifo_is_empty(&central_heap) && count < PAGES_PER_KFIFO_ALLOC) {
+      while (!kfifo_is_full(kfifos_alloc + i) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_PER_KFIFO_ALLOC) {
+        /*
         ret = kfifo_out(&central_heap, &entry, sizeof(entry));
         if (ret != sizeof(entry)) {
             printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 2);
             break;
+        }*/
+        while(central_heap[idx] != 'F') {
+          idx = (idx + 1) % num_pages_total;
         }
+        entry = swp_entry(MAX_SWAPFILES-1, idx);
         while(!kfifo_in(kfifos_alloc + i, &entry, sizeof(entry))) {
           count++;
         }
+        central_heap[idx] = 'U';
         count++;
       }
     }
@@ -485,7 +497,7 @@ static void __exit sswap_rdma_cleanup_module(void)
   if (thread) {
     kthread_stop(thread);
   }
-  kfifo_free(&central_heap);
+  //kfifo_free(&central_heap);
 
   return;
 }
@@ -1109,20 +1121,23 @@ static int sswap_rdma_write_read_test(void)
 
 static int central_heap_init(void)
 {
-  int i, ret;
-  swp_entry_t entry;
+  int i;
+  //swp_entry_t entry;
 
   base_address[0] = gctrl->servermr.baseaddr;
   remote_keys[0] = gctrl->servermr.key;
+  /*
   ret = kfifo_alloc(&central_heap, sizeof(swp_entry)*num_pages_total, GFP_KERNEL);
 	if(unlikely(ret)) {
 		pr_err("Alloc memory for kfifos_alloc failed with error code %d.", ret);
     return ret;
-	}
+	}*/
 
-  for(i = 0;i < (addr_space >> PAGE_SHIFT); ++i) {
+  for(i = 0;i < num_pages_total; ++i) {
+    /*
     entry = swp_entry(MAX_SWAPFILES - 1, i);
-    kfifo_in(&central_heap, &entry, sizeof(swp_entry_t));
+    kfifo_in(&central_heap, &entry, sizeof(swp_entry_t));*/
+    central_heap[i] = 'F';
   }
   return 0;
 }
