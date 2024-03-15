@@ -13,7 +13,7 @@ os.sched_setaffinity(pid, {21,22,23,24})
 cgroup_path = "/cgroup2"
 
 # Name of the new cgroup
-cgroup_name = "test1/higgs"
+cgroup_name = "test1"
 
 # Path to the new cgroup
 new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
@@ -22,7 +22,7 @@ new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
 os.makedirs(new_cgroup_path, exist_ok=True)
 # Set the memory limit (in bytes)
 with open(os.path.join(new_cgroup_path, "memory.high"), "w") as f:
-    f.write("2111M")
+    f.write("4500M")
 
 with open(os.path.join(new_cgroup_path, "cgroup.procs"), "w") as f:
     f.write(str(pid))

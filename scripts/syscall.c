@@ -5,8 +5,8 @@
 #define __NR_hello_syscall 449
 
 int main() {
-    int value = 1; // 传递给系统调用的参数值
-    long int ret = syscall(__NR_hello_syscall, value);
+    const char *path = "/mydata/swapfile";
+    long int ret = syscall(__NR_hello_syscall, path);
     if (ret == 0)
         printf("System call executed successfully.\n");
     else
