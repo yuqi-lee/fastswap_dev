@@ -158,7 +158,7 @@ static int sswap_rdma_create_qp(struct rdma_queue *queue)
   struct ib_qp_init_attr init_attr;
   int ret;
 
-  pr_info("start: %s\n", __FUNCTION__);
+  //pr_info("start: %s\n", __FUNCTION__);
 
   memset(&init_attr, 0, sizeof(init_attr));
   init_attr.event_handler = sswap_rdma_qp_event;
@@ -550,7 +550,11 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
 
   BUG_ON(qe->dma == 0);
   BUG_ON(raddr == 0);
-  BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
+  //BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
+  if(raddr & ((1 << PAGE_SHIFT) - 1)) {
+    pr_err("invalid remote address = %p", (void*)raddr);
+    return -1;
+  }
 
   sge->addr = qe->dma;
   sge->length = PAGE_SIZE;
@@ -1126,6 +1130,12 @@ static int central_heap_init(void)
 
   base_address[0] = gctrl->servermr.baseaddr;
   remote_keys[0] = gctrl->servermr.key;
+  if((base_address[0] & ((1 << PAGE_SHIFT) - 1)) != 0) {
+    pr_info("base remote address(%p) is not aligned by page size.", (void*)base_address[0]);
+    base_address[0] = ((base_address[0] >> PAGE_SHIFT) << PAGE_SHIFT) + (1 << PAGE_SHIFT);
+  }
+  pr_info("base address = %p, remote key = %u", (void*)base_address[0], remote_keys[0]);
+
   /*
   ret = kfifo_alloc(&central_heap, sizeof(swp_entry)*num_pages_total, GFP_KERNEL);
 	if(unlikely(ret)) {
