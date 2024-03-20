@@ -30,7 +30,7 @@ with open(os.path.join(new_cgroup_path, "cgroup.procs"), "w") as f:
 start_time = time.time()
 
 
-data = pd.read_csv('/users/YuqiLi/HIGGS.csv', header=None)
+data = pd.read_csv('/mydata/HIGGS.csv', header=None)
 X = data.iloc[:, 1:]
 y = data.iloc[:, 0]
 

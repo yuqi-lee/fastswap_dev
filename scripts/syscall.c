@@ -5,7 +5,7 @@
 #define __NR_hello_syscall 449
 
 int main() {
-    const char *path = "/mydata/swapfile";
+    const char *path = "/mydata/swapfile2";
     long int ret = syscall(__NR_hello_syscall, path);
     if (ret == 0)
         printf("System call executed successfully.\n");

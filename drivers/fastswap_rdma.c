@@ -74,7 +74,7 @@ static int kfifos_daemon(void* data) {
             printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 2);
             break;
         }*/
-        while(central_heap[idx] != 'F') {
+        while(central_heap[idx] != 'F' || idx < 10) {
           idx = (idx + 1) % num_pages_total;
         }
         entry = swp_entry(MAX_SWAPFILES-1, idx);
@@ -516,6 +516,7 @@ static void sswap_rdma_write_done(struct ib_cq *cq, struct ib_wc *wc)
   ib_dma_unmap_page(ibdev, req->dma, PAGE_SIZE, DMA_TO_DEVICE);
 
   atomic_dec(&q->pending);
+  atomic_inc(&num_direct_swapout_pages_done);
   kmem_cache_free(req_cache, req);
 }
 
@@ -536,6 +537,7 @@ static void sswap_rdma_read_done(struct ib_cq *cq, struct ib_wc *wc)
   complete(&req->done);
   atomic_dec(&q->pending);
   kmem_cache_free(req_cache, req);
+  atomic_inc(&num_direct_swapin_pages_done);
 }
 
 inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe,
@@ -1014,9 +1016,9 @@ int direct_swap_rdma_write(struct page *page, u64 roffset, int type) {
   
   //BUG_ON(ret);
   drain_queue(q);
-  if(!ret) {
-    atomic_inc(&num_direct_swap_pages);
-  }
+  //if(!ret) {
+  //  atomic_inc(&num_direct_swap_pages);
+  //}
   return ret;
 }
 EXPORT_SYMBOL(direct_swap_rdma_write);
@@ -1058,11 +1060,12 @@ void swap_pages_timer_callback(struct timer_list *timer) {
   int num_alloc_blocks_tmp = atomic_read(&num_alloc_blocks);
   int num_free_blocks_tmp = atomic_read(&num_free_blocks);
   int num_free_fail_tmp = atomic_read(&num_free_fail);
-  int num_direct_swap_pages_tmp = atomic_read(&num_direct_swap_pages);
+  int num_direct_swapout_pages_done_tmp = atomic_read(&num_direct_swapout_pages_done);
+  int num_direct_swapin_pages_done_tmp = atomic_read(&num_direct_swapin_pages_done);
 
   pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
   pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
-  pr_info("num_direct_swap_pages = %d\n", num_direct_swap_pages_tmp);
+  pr_info("num_direct_swapout_pages = %d, num_direct_swapin_pages = %d.\n", num_direct_swapout_pages_done_tmp, num_direct_swapin_pages_done_tmp);
   mod_timer(timer, jiffies + msecs_to_jiffies(swap_pages_print_interval)); 
 }
 

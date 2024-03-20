@@ -84,7 +84,9 @@ struct sswap_rdma_ctrl {
 };
 
 struct timer_list swap_pages_timer;
-atomic_t num_direct_swap_pages = ATOMIC_INIT(0);
+//atomic_t num_direct_swap_pages = ATOMIC_INIT(0);
+atomic_t num_direct_swapout_pages_done = ATOMIC_INIT(0);
+atomic_t num_direct_swapin_pages_done = ATOMIC_INIT(0);
 
 atomic_t num_swap_pages = ATOMIC_INIT(0);
 spinlock_t locks[num_groups];
