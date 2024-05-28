@@ -33,7 +33,7 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 static struct task_struct *thread;
 
 static int kfifos_daemon(void* data) {
-  int i, count, ret, idx, offset;
+  int i, count, ret, idx, offset, retry_count;
   swp_entry_t entry;
   idx = 0;
   while(!kthread_should_stop()) {
@@ -74,17 +74,31 @@ static int kfifos_daemon(void* data) {
             printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 2);
             break;
         }*/
-        while(central_heap[idx] != 'F' || idx < 10) {
+
+        retry_count = 0;
+        while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
           idx = (idx + 1) % num_pages_total;
+          retry_count++;
         }
+        if(retry_count >= 1024) {
+          printk(" Step2: Fill unused pages failed in find free slot...\n");
+          break;
+        }
+
         entry = swp_entry(MAX_SWAPFILES-1, idx);
-        while(!kfifo_in(kfifos_alloc + i, &entry, sizeof(entry))) {
-          count++;
+
+        ret = kfifo_in(kfifos_alloc + i, &entry, sizeof(entry));
+        if(ret != sizeof(entry)) {
+          printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 2);
+          break;
         }
+        
         central_heap[idx] = 'U';
         count++;
       }
     }
+    
+    cond_resched();
   }
   return 0;
 }

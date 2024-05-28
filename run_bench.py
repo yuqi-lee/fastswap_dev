@@ -9,7 +9,7 @@ pid = os.getpid()
 cgroup_path = "/cgroup2"
 
 # Name of the new cgroup
-cgroup_name = "test1/runbench"
+cgroup_name = "test1"
 
 # Path to the new cgroup
 new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
@@ -19,14 +19,14 @@ os.makedirs(new_cgroup_path, exist_ok=True)
 
 # Set the memory limit (in bytes)
 with open(os.path.join(new_cgroup_path, "memory.high"), "w") as f:
-    f.write("15G")  
+    f.write("4G")  
 
 # Run the command as a subprocess
 #command = ["python", "/users/YuqiLi/my_higgs.py"]
 #command = ["/users/YuqiLi/cfm/quicksort/quicksort", "16384"]
 #command = ["/users/YuqiLi/XSBench/openmp-threading/", "-t", "4", "-g", "72000", "-p", "1000000"]
 #command = ["taskset","-c", "4,6,8,10,12,14,16,18","/users/YuqiLi/gapbs/pr", "-g", "27"]
-command = ["taskset","-c", "11,12,13,14,15,16,17,18", "/users/YuqiLi/gapbs/pr", "-f", "/mydata/gapbs/k27output.sg"]
+command = ["taskset","-c", "11,12,13,14,15,16", "python", "/mydata/fastswap/higgs.py"]
 
 env = dict(os.environ)  
 env["OMP_NUM_THREADS"] = "8"
