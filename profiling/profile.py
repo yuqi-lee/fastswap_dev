@@ -1,23 +1,24 @@
 from bcc import BPF
 from time import sleep
 
-#func = "mlx5_ib_reg_user_mr"
-#func = "dma_map_sgtable"
-#func = "create_real_mr"
-#func = "ib_umem_get"
-#func = " pin_user_pages_fast"
-#func = "mlx5_ib_dereg_mr"
-#func = "ib_umem_release"
 func = "get_swap_pages"
-
+file_path_prex = "res_v2_"
+file_path_tail = ".txt"
 
 # 定义BPF程序
 bpf_program = """
 #include <uapi/linux/ptrace.h>
+#include <uapi/linux/bpf_perf_event.h>
 
-// 定义用于存储时间戳和计算延迟的哈希表
-BPF_HASH(start, u32);
-BPF_HASH(latency, u32, u64);
+// 定义用于存储时间戳的哈希表
+BPF_HASH(start, u32, u64);
+
+// 定义一个perf event来输出延迟数据
+struct data_t {
+    u32 pid;
+    u64 delta;
+};
+BPF_PERF_OUTPUT(events);
 
 // 记录函数开始时间的跟踪点
 int trace_func_entry(struct pt_regs *ctx) {
@@ -34,7 +35,13 @@ int trace_func_return(struct pt_regs *ctx) {
     if (tsp != 0) {
         u64 ts = bpf_ktime_get_ns();
         u64 delta = ts - *tsp;
-        latency.update(&pid, &delta);
+        
+        struct data_t data = {};
+        data.pid = pid;
+        data.delta = delta;
+        
+        events.perf_submit(ctx, &data, sizeof(data));
+        
         start.delete(&pid);
     }
     return 0;
@@ -49,18 +56,21 @@ b.attach_kprobe(event=func, fn_name="trace_func_entry")
 b.attach_kretprobe(event=func, fn_name="trace_func_return")
 
 
-# 打印延迟统计信息
-def print_latency():
-    print("Function Latency (ns):")
-    latency = b.get_table("latency")
-    for k, v in latency.items():
-        print(f"PID {k.value}: {v.value} ns")
-    latency.clear()
+
+# 定义处理函数
+def print_event(cpu, data, size):
+    event = b["events"].event(data)
+    file_path = file_path_prex + str(event.pid) + file_path_tail
+    f = open(file_path, 'a')
+    print(f"PID {event.pid}: {event.delta} ns")
+    f.write(f"{event.delta}\n")
+
+# 绑定事件
+b["events"].open_perf_buffer(print_event)
 
 # 主循环
 try:
     while True:
-        sleep(5)
-        print_latency()
+        b.perf_buffer_poll()
 except KeyboardInterrupt:
     pass

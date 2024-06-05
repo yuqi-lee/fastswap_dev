@@ -92,6 +92,9 @@ static int sswap_poll_load(int cpu)
 static void sswap_invalidate_page(unsigned type, pgoff_t offset)
 {
   if(direct_swap_enabled() && is_direct_swap_area(type)) {
+    BUG_ON(offset >= num_pages_total);
+    //BUG_ON(central_heap[offset] != 'U');
+    central_heap[offset] = 'F';
     return;
   } else {
     /*sswap_rdma_free_page(offset );*/

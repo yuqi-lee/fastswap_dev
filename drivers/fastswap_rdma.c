@@ -51,7 +51,7 @@ static int kfifos_daemon(void* data) {
         
         offset = swp_offset(entry);
         BUG_ON(offset >= num_pages_total);
-        BUG_ON(central_heap[offset] != 'U');
+        //BUG_ON(central_heap[offset] != 'U');
         central_heap[offset] = 'F';
         /*
         while(!kfifo_in(&central_heap, &entry, sizeof(entry))) {
@@ -96,6 +96,33 @@ static int kfifos_daemon(void* data) {
         central_heap[idx] = 'U';
         count++;
       }
+    }
+
+    /*
+    * [DirectSwap] Step3: Fill reclaim cpu kfifo
+    */
+    count = 0;
+    while (!kfifo_is_full(&kfifos_reclaim_alloc) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_IN_RECLAIM_KFIFO) {
+      retry_count = 0;
+      while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
+        idx = (idx + 1) % num_pages_total;
+        retry_count++;
+      }
+      if(retry_count >= 1024) {
+        printk(" Step3: Fill reclaim cpu kfifo failed in find free slot...\n");
+        break;
+      }
+
+      entry = swp_entry(MAX_SWAPFILES-1, idx);
+
+      ret = kfifo_in(&kfifos_reclaim_alloc, &entry, sizeof(entry));
+      if(ret != sizeof(entry)) {
+        printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 3);
+        break;
+      }
+        
+      central_heap[idx] = 'U';
+      count++;
     }
     
     cond_resched();
@@ -524,7 +551,9 @@ static void sswap_rdma_write_done(struct ib_cq *cq, struct ib_wc *wc)
   struct ib_device *ibdev = q->ctrl->rdev->dev;
 
   if (unlikely(wc->status != IB_WC_SUCCESS)) {
-    pr_err("sswap_rdma_write_done status is not success, it is=%d\n", wc->status);
+    if((int)wc->status != 5) {
+      pr_err("sswap_rdma_write_done status is not success, it is=%d\n", wc->status);
+    }
     //q->write_error = wc->status;
   }
   ib_dma_unmap_page(ibdev, req->dma, PAGE_SIZE, DMA_TO_DEVICE);

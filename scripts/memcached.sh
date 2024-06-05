@@ -1,0 +1,1 @@
+memtier_benchmark -p 112133 -P memcache_text --ratio=1:19 --clients=50 --threads=8 --test-time=60 --random-data --key-pattern=G:G --key-maximum=10000000 

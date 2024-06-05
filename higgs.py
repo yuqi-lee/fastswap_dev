@@ -7,7 +7,7 @@ import time
 import os
 
 pid = os.getpid()
-os.sched_setaffinity(pid, {5,6,21,22,23,24})
+os.sched_setaffinity(pid, {0,1,2,3,4,5,6,7,21,22,23,24})
 
 # Path to the cgroup v2 hierarchy
 cgroup_path = "/cgroup2"
@@ -22,7 +22,7 @@ new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
 os.makedirs(new_cgroup_path, exist_ok=True)
 # Set the memory limit (in bytes)
 with open(os.path.join(new_cgroup_path, "memory.high"), "w") as f:
-    f.write("4500M")
+    f.write("4G")
 
 with open(os.path.join(new_cgroup_path, "cgroup.procs"), "w") as f:
     f.write(str(pid))
@@ -49,8 +49,8 @@ def train_and_test(filename, param, num_round, nthread):
 param = {'max_depth': 9, 'eta': 0.03, 'objective': 'binary:logistic'}
 
 # Start two threads to train the models
-thread1 = threading.Thread(target=train_and_test, args=('/mydata/HIGGS.csv', param, 245, 4))
-thread2 = threading.Thread(target=train_and_test, args=('/mydata/SUSY.csv', param, 500, 2))
+thread1 = threading.Thread(target=train_and_test, args=('/mydata/HIGGS.csv', param, 245, 8))
+thread2 = threading.Thread(target=train_and_test, args=('/mydata/SUSY.csv', param, 500, 4))
 
 thread1.start()
 thread2.start()
