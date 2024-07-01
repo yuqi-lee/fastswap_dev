@@ -1,8 +1,8 @@
 from bcc import BPF
 from time import sleep
 
-func = "get_swap_pages"
-file_path_prex = "res_v2_"
+func = "get_swap_page"
+file_path_prex = "res_get_swap_page_directswap"
 file_path_tail = ".txt"
 
 # 定义BPF程序

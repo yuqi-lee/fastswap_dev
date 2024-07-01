@@ -7,13 +7,13 @@ import time
 import os
 
 pid = os.getpid()
-os.sched_setaffinity(pid, {0,1,2,3,4,5,6,7,8,9,10,11})
+os.sched_setaffinity(pid, {20,21,22,23,24,25,26,27,28,29,18,19})
 
 # Path to the cgroup v2 hierarchy
 cgroup_path = "/cgroup2"
 
 # Name of the new cgroup
-cgroup_name = "test1"
+cgroup_name = "test2"
 
 # Path to the new cgroup
 new_cgroup_path = os.path.join(cgroup_path, cgroup_name)
