@@ -3,6 +3,7 @@
 #include "fastswap_rdma.h"
 #include <linux/slab.h>
 #include <linux/cpumask.h>
+#include <linux/delay.h>
 
 static struct sswap_rdma_ctrl *gctrl;
 static int serverport;
@@ -700,6 +701,8 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   struct rdma_queue *q;
 
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
+
+  //udelay(6);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
   ret = write_queue_add(q, page, roffset);
