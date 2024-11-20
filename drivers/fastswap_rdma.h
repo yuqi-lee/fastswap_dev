@@ -94,6 +94,7 @@ u64 offset_to_rpage_addr[num_pages_total] = {0};
 u64 *base_address;
 u32 *remote_keys;
 //struct kfifo central_heap;
+DECLARE_KFIFO(my_fifo, unsigned char, 1024);
 char central_heap[num_pages_total] = {'F'};
 
 struct rdma_queue *sswap_rdma_get_queue(unsigned int idx, enum qp_type type);

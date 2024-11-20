@@ -1,6 +1,7 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include "fastswap_rdma.h"
+#include "extended_entry_allocator.h"
 #include <linux/slab.h>
 #include <linux/cpumask.h> 
 #include <linux/delay.h>
@@ -52,7 +53,8 @@ static int kfifos_daemon(void* data) {
         offset = swp_offset(entry);
         BUG_ON(offset >= num_pages_total);
         //BUG_ON(central_heap[offset] != 'U');
-        central_heap[offset] = 'F';
+        //central_heap[offset] = 'F';
+        push_queue_deallocator(offset);
         /*
         while(!kfifo_in(&central_heap, &entry, sizeof(entry))) {
           count++;
@@ -74,7 +76,7 @@ static int kfifos_daemon(void* data) {
             printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 2);
             break;
         }*/
-
+        /*
         retry_count = 0;
         while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
           idx = (idx + 1) % num_pages_total;
@@ -83,26 +85,28 @@ static int kfifos_daemon(void* data) {
         if(retry_count >= 1024) {
           printk(" Step2: Fill unused pages failed in find free slot...\n");
           break;
-        }
-
-        entry = swp_entry(MAX_SWAPFILES-1, idx);
+        }*/
+        uint64_t page_addr = pop_queue_allocator();
+        entry = swp_entry(MAX_SWAPFILES-1, (page_addr >> PAGE_SHIFT));
 
         ret = kfifo_in(kfifos_alloc + i, &entry, sizeof(entry));
         if(ret != sizeof(entry)) {
           printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 2);
           break;
         }
-        
+        /*
         central_heap[idx] = 'U';
         count++;
+        */
       }
     }
 
     /*
     * [DirectSwap] Step3: Fill reclaim cpu kfifo
     */
-    count = 0;
+    //count = 0;
     while (!kfifo_is_full(&kfifos_reclaim_alloc) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_IN_RECLAIM_KFIFO) {
+      /*
       retry_count = 0;
       while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
         idx = (idx + 1) % num_pages_total;
@@ -111,18 +115,19 @@ static int kfifos_daemon(void* data) {
       if(retry_count >= 1024) {
         printk(" Step3: Fill reclaim cpu kfifo failed in find free slot...\n");
         break;
-      }
-
-      entry = swp_entry(MAX_SWAPFILES-1, idx);
+      }*/
+      uint64_t page_addr = pop_queue_allocator();
+      entry = swp_entry(MAX_SWAPFILES-1, (page_addr >> PAGE_SHIFT));
 
       ret = kfifo_in(&kfifos_reclaim_alloc, &entry, sizeof(entry));
       if(ret != sizeof(entry)) {
         printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 3);
         break;
       }
-        
+      /*
       central_heap[idx] = 'U';
       count++;
+      */
     }
     
     cond_resched();
