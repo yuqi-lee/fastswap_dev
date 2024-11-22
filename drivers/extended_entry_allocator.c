@@ -51,13 +51,13 @@ int allocator_page_queue_init(void) {
     // return 0;
 
     queue_allocator = (struct allocator_page_queue *) vmap(pages_, addr_space_->nrpages, VM_MAP, PAGE_KERNEL);
-    if(cpu_cache_ == NULL) {
+    if(queue_allocator == NULL) {
         pr_err("Bad v-mapping for allocator_page_queue\n");
         kfree(pages_);
         return -1;
     }
 
-    pr_info("allocator_page_queue address is %p\n", (void*)allocator_page_queue);
+    pr_info("allocator_page_queue address is %p\n", (void*)queue_allocator);
 
     kfree(pages_);
     return 0;
@@ -111,13 +111,13 @@ int deallocator_page_queue_init(void) {
     // return 0;
 
     queue_deallocator = (struct deallocator_page_queue *) vmap(pages_, addr_space_->nrpages, VM_MAP, PAGE_KERNEL);
-    if(cpu_cache_ == NULL) {
+    if(queue_deallocator == NULL) {
         pr_err("Bad v-mapping for deallocator_page_queue\n");
         kfree(pages_);
         return -1;
     }
 
-    pr_info("deallocator_page_queue address is %p\n", (void*)deallocator_page_queue);
+    pr_info("deallocator_page_queue address is %p\n", (void*)queue_deallocator);
 
     kfree(pages_);
     return 0;
@@ -141,8 +141,9 @@ EXPORT_SYMBOL(get_length_allocator);
 
 u64 pop_queue_allocator(void) {
     u64 ret = 0;
-    while(get_length_allocator(queue_allocator->pages, queue_allocator->begin, queue_allocator->end) == 0) ;
-    u64 prev_begin = queue_allocator->begin;
+    u64 prev_begin;
+    while(get_length_allocator() == 0) ;
+    prev_begin = queue_allocator->begin;
     queue_allocator->begin = (queue_allocator->begin + 1) % ALLOCATE_BUFFER_SIZE;
     while(queue_allocator->pages[prev_begin] == 0) ;
     ret = queue_allocator->pages[prev_begin];
@@ -176,16 +177,21 @@ u64 pop_queue_deallocator(void) {
 int push_queue_deallocator(u64 page_addr) {
     int ret = 0;
     u64 prev_end = queue_deallocator->end;
-    while(get_length_deallocator(queue_deallocator->pages, queue_deallocator->begin, queue_deallocator->end) == DEALLOCATE_BUFFER_SIZE - 1) ;
+    while(get_length_deallocator() == DEALLOCATE_BUFFER_SIZE - 1) ;
     queue_deallocator->end = (queue_deallocator->end + 1) % DEALLOCATE_BUFFER_SIZE;
     queue_deallocator->pages[prev_end] = page_addr;
     return ret;
 }
 EXPORT_SYMBOL(push_queue_deallocator);
 
+void page_queue_delete(void) {
+    vunmap(queue_allocator);
+    vunmap(queue_deallocator);
+}
+EXPORT_SYMBOL(page_queue_delete);
+
 static int __init extended_entry_allocator_init_module(void) {
     int ret = 0;
-    int i = 0;
 
     ret = allocator_page_queue_init();
     if (ret) {
@@ -203,12 +209,11 @@ static int __init extended_entry_allocator_init_module(void) {
 }
 
 static void __exit extended_entry_allocator_cleanup_module(void) {
-    //cpu_cache_delete();
-    //kfree(blocks_map);
+    page_queue_delete();
 }
 
-module_init(rpage_allocator_init_module);
-module_exit(rpage_allocator_cleanup_module);
+module_init(extended_entry_allocator_init_module);
+module_exit(extended_entry_allocator_cleanup_module);
 
 MODULE_LICENSE("GPL v2");
 MODULE_DESCRIPTION("Remote Page Allocator");

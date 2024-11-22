@@ -7,7 +7,7 @@
 #define DEALLOCATE_BUFFER_SIZE (40 << 20) // 80 MB
 
 struct allocator_page_queue {
-    u64 rkey;
+    u32 rkey;
     u64 begin;
     u64 end;
     u64 pages[ALLOCATE_BUFFER_SIZE];

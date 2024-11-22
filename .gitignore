@@ -2,6 +2,7 @@
 *.o.d
 *.mod.o
 *.mod.c
+*.mod
 *.ko
 *.cmd
 *.tmp_versions

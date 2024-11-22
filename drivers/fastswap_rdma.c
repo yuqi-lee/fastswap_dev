@@ -105,7 +105,7 @@ static int kfifos_daemon(void* data) {
     * [DirectSwap] Step3: Fill reclaim cpu kfifo
     */
     //count = 0;
-    while (!kfifo_is_full(&kfifos_reclaim_alloc) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_IN_RECLAIM_KFIFO) {
+    //while (!kfifo_is_full(&kfifos_reclaim_alloc) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_IN_RECLAIM_KFIFO) {
       /*
       retry_count = 0;
       while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
@@ -115,7 +115,7 @@ static int kfifos_daemon(void* data) {
       if(retry_count >= 1024) {
         printk(" Step3: Fill reclaim cpu kfifo failed in find free slot...\n");
         break;
-      }*/
+      }*//*
       uint64_t page_addr = pop_queue_allocator();
       entry = swp_entry(MAX_SWAPFILES-1, (page_addr >> PAGE_SHIFT));
 
@@ -124,11 +124,11 @@ static int kfifos_daemon(void* data) {
         printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 3);
         break;
       }
-      /*
+      
       central_heap[idx] = 'U';
       count++;
       */
-    }
+    //}
     
     cond_resched();
   }
@@ -846,32 +846,13 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   struct rdma_queue *q;
   //int num_swap_pages_tmp;
   u64 page_offset = roffset;
-  u64 raddr = offset_to_rpage_addr[page_offset];
+  u64 raddr = roffset << PAGE_SHIFT;
   //u64 raddr_block = 0;
-  u32 rkey = get_rkey((roffset >> BLOCK_SHIFT) << BLOCK_SHIFT);
+  //u32 rkey = get_rkey((roffset >> BLOCK_SHIFT) << BLOCK_SHIFT);
+  u32 rkey = queue_allocator->rkey;
 
   BUG_ON(roffset >= num_pages_total);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
-
-  if(raddr == 0) {
-    //spin_lock(locks+ (page_offset % num_groups));
-    raddr = alloc_remote_page();
-    if(raddr == 0) {
-      pr_err("bad remote page alloc\n");
-      //spin_unlock(locks + (page_offset % num_groups));
-      return -1;
-    }
-    offset_to_rpage_addr[page_offset] = raddr;
-    // spin_unlock(locks + (page_offset % num_groups));
-
-    atomic_inc(&num_swap_pages);
-    /*
-    num_swap_pages_tmp = atomic_read(&num_swap_pages);
-    if(num_swap_pages_tmp % print_interval == 0) {
-      pr_info("num_swap_pages = %d, swap memory = %d GB\n", num_swap_pages_tmp, (num_swap_pages_tmp >> 18));
-    }*/
-
-  }
 
   BUG_ON(raddr == 0);
 
@@ -995,8 +976,8 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
 {
   struct rdma_queue *q;
   int ret;
-  u64 raddr = offset_to_rpage_addr[roffset];
-  u64 raddr_block;
+  //u64 raddr = offset_to_rpage_addr[roffset];
+  u64 raddr = roffset << PAGE_SHIFT;
   u32 rkey = 0;
 
   BUG_ON(raddr == 0);
@@ -1007,9 +988,7 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
-  raddr_block = raddr >> BLOCK_SHIFT;
-  raddr_block = raddr_block << BLOCK_SHIFT;
-  rkey = get_rkey(raddr_block);
+  rkey = queue_allocator->rkey;
   if(rkey == 0) {
     pr_err("read_sync:remote address(%p) is invalid.\n", (void*)raddr);
     return -1;
@@ -1029,9 +1008,9 @@ EXPORT_SYMBOL(sswap_rdma_poll_load);
 
 int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type) {
   struct rdma_queue *q;
-  int id = remote_area_id(type);
-  u64 raddr = base_address[id] + (roffset << PAGE_SHIFT);
-  u32 rkey = remote_keys[id];
+  //int id = remote_area_id(type);
+  u64 raddr = (roffset << PAGE_SHIFT);
+  u32 rkey = queue_allocator->rkey;
   int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
   ret = begin_read(q, page, raddr, rkey);
@@ -1042,9 +1021,9 @@ EXPORT_SYMBOL(direct_swap_rdma_read_async);
 
 int direct_swap_rdma_read_sync(struct page *page, u64 roffset, int type) {
   struct rdma_queue *q;
-  int id = remote_area_id(type);
-  u64 raddr = base_address[id] + (roffset << PAGE_SHIFT);
-  u32 rkey = remote_keys[id];
+  //int id = remote_area_id(type);
+  u64 raddr = (roffset << PAGE_SHIFT);
+  u32 rkey = queue_allocator->rkey;
   int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
   ret = begin_read(q, page, raddr, rkey);
@@ -1055,9 +1034,9 @@ EXPORT_SYMBOL(direct_swap_rdma_read_sync);
 
 int direct_swap_rdma_write(struct page *page, u64 roffset, int type) {
   struct rdma_queue *q;
-  int id = remote_area_id(type);
-  u64 raddr = base_address[id] + (roffset << PAGE_SHIFT);
-  u32 rkey = remote_keys[id];
+  //int id = remote_area_id(type);
+  u64 raddr = (roffset << PAGE_SHIFT);
+  u32 rkey = queue_allocator->rkey;
   int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
   ret = write_queue_add(q, page, raddr, rkey);
