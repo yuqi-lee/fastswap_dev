@@ -74,7 +74,7 @@ int deallocator_page_queue_init(void) {
     int i = 0;
     int ret;
 
-    ret = kern_path("/dev/shm/deallocator_page_queue_init", LOOKUP_FOLLOW, &path_);
+    ret = kern_path("/dev/shm/deallocator_page_queue", LOOKUP_FOLLOW, &path_);
     if (ret != 0) {
         // handle error
         pr_err("debug: cannot find /deallocator_page_queue_init with error code %d\n", ret);
@@ -155,6 +155,7 @@ EXPORT_SYMBOL(pop_queue_allocator);
 int push_queue_allocator(u64 page_addr) {
     return 0;
 }
+EXPORT_SYMBOL(push_queue_allocator);
 
 u64 get_length_deallocator(void) {
     u64 begin = queue_deallocator->begin;
@@ -177,7 +178,7 @@ u64 pop_queue_deallocator(void) {
 int push_queue_deallocator(u64 page_addr) {
     int ret = 0;
     u64 prev_end = queue_deallocator->end;
-    while(get_length_deallocator() == DEALLOCATE_BUFFER_SIZE - 1) ;
+    while(get_length_deallocator() >= DEALLOCATE_BUFFER_SIZE - 1) ;
     queue_deallocator->end = (queue_deallocator->end + 1) % DEALLOCATE_BUFFER_SIZE;
     queue_deallocator->pages[prev_end] = page_addr;
     return ret;

@@ -3,8 +3,8 @@
 #include <linux/types.h>
 #include <linux/module.h>
 
-#define ALLOCATE_BUFFER_SIZE (10 << 20) // 80 MB
-#define DEALLOCATE_BUFFER_SIZE (40 << 20) // 80 MB
+#define ALLOCATE_BUFFER_SIZE (128 << 10) // 512 MB
+#define DEALLOCATE_BUFFER_SIZE (512 << 10) // 2 GB
 
 struct allocator_page_queue {
     u32 rkey;

@@ -1,7 +1,6 @@
 #if !defined(_SSWAP_RDMA_H)
 #define _SSWAP_RDMA_H
 
-#include "rpage_allocator.h"
 #include <rdma/ib_verbs.h>
 #include <rdma/rdma_cm.h>
 #include <linux/inet.h>
@@ -16,6 +15,8 @@
 #include <linux/swap.h>
 #include <linux/swapops.h>
 #include <linux/directswap.h>
+#include "rpage_allocator.h"
+#include "extended_entry_allocator.h"
 
 #define num_groups 8
 // #define print_interval (256 * 1024)

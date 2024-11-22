@@ -1,7 +1,6 @@
 #define pr_fmt(fmt) KBUILD_MODNAME ": " fmt
 
 #include "fastswap_rdma.h"
-#include "extended_entry_allocator.h"
 #include <linux/slab.h>
 #include <linux/cpumask.h> 
 #include <linux/delay.h>
@@ -34,7 +33,7 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 static struct task_struct *thread;
 
 static int kfifos_daemon(void* data) {
-  int i, count, ret, idx, offset, retry_count;
+  int i, count, ret, idx, offset;
   swp_entry_t entry;
   idx = 0;
   while(!kthread_should_stop()) {
@@ -105,7 +104,7 @@ static int kfifos_daemon(void* data) {
     * [DirectSwap] Step3: Fill reclaim cpu kfifo
     */
     //count = 0;
-    //while (!kfifo_is_full(&kfifos_reclaim_alloc) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_IN_RECLAIM_KFIFO) {
+    while (!kfifo_is_full(&kfifos_reclaim_alloc) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_IN_RECLAIM_KFIFO) {
       /*
       retry_count = 0;
       while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
@@ -115,7 +114,7 @@ static int kfifos_daemon(void* data) {
       if(retry_count >= 1024) {
         printk(" Step3: Fill reclaim cpu kfifo failed in find free slot...\n");
         break;
-      }*//*
+      }*/
       uint64_t page_addr = pop_queue_allocator();
       entry = swp_entry(MAX_SWAPFILES-1, (page_addr >> PAGE_SHIFT));
 
@@ -127,8 +126,8 @@ static int kfifos_daemon(void* data) {
       
       central_heap[idx] = 'U';
       count++;
-      */
-    //}
+      
+    }
     
     cond_resched();
   }
@@ -640,7 +639,7 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
 
   return ret;
 }
-
+/*
 static void sswap_rdma_recv_remotemr_done(struct ib_cq *cq, struct ib_wc *wc)
 {
   struct rdma_req *qe =
@@ -658,10 +657,10 @@ static void sswap_rdma_recv_remotemr_done(struct ib_cq *cq, struct ib_wc *wc)
   pr_info("servermr baseaddr=%llx, key=%u\n", ctrl->servermr.baseaddr,
 	  ctrl->servermr.key);
   complete_all(&qe->done);
-}
+}*/
 
 
-
+/*
 static int sswap_rdma_post_recv(struct rdma_queue *q, struct rdma_req *qe,
   size_t bufsize)
 {
@@ -684,7 +683,7 @@ static int sswap_rdma_post_recv(struct rdma_queue *q, struct rdma_req *qe,
     pr_err("ib_post_recv failed: %d\n", ret);
   }
   return ret;
-}
+}*/
 
 
 /* allocates a sswap rdma request, creates a dma mapping for it in
@@ -845,7 +844,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   int ret;
   struct rdma_queue *q;
   //int num_swap_pages_tmp;
-  u64 page_offset = roffset;
+  //u64 page_offset = roffset;
   u64 raddr = roffset << PAGE_SHIFT;
   //u64 raddr_block = 0;
   //u32 rkey = get_rkey((roffset >> BLOCK_SHIFT) << BLOCK_SHIFT);
@@ -873,16 +872,16 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 }
 EXPORT_SYMBOL(sswap_rdma_write);
 
-/*
+
 static int sswap_rdma_recv_remotemr_fake(struct sswap_rdma_ctrl *ctrl)
 {
   ctrl->servermr.baseaddr = 0;
   ctrl->servermr.key = 0;
   return 0;
 }
-*/
 
 
+/*
 static int sswap_rdma_recv_remotemr(struct sswap_rdma_ctrl *ctrl)
 {
   struct rdma_req *qe;
@@ -910,7 +909,7 @@ out_free_qe:
   kmem_cache_free(req_cache, qe);
 out:
   return ret;
-}
+}*/
 
 /* page is unlocked when the wr is done.
  * posts an RDMA read on this cpu's qp */
@@ -1209,7 +1208,7 @@ static int __init sswap_rdma_init_module(void)
     return -ENODEV;
   }
 
-  ret = sswap_rdma_recv_remotemr(gctrl);
+  ret = sswap_rdma_recv_remotemr_fake(gctrl);
   if (ret) {
     pr_err("could not setup remote memory region\n");
     ib_unregister_client(&sswap_rdma_ib_client);
