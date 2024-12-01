@@ -28,21 +28,38 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 #define QP_MAX_SEND_WR	(4096)
 #define CQ_NUM_CQES	(QP_MAX_SEND_WR)
 #define POLL_BATCH_HIGH (QP_MAX_SEND_WR / 4)
-#define DAEMON_CORE 31
+#define DAEMON_CORE 26
+#define DAEMON_CORE_FREE 27
+#define SWAP_AREA_SHIFT 36
+#define APP_CORES 9
+
+//int priority[48] = {1};
+
+const u64 base_addr = ((u64)1 << SWAP_AREA_SHIFT);
 
 static struct task_struct *thread;
+static struct task_struct *thread_free;
 
-static int kfifos_daemon(void* data) {
-  int i, count, ret, idx, offset;
+static pgoff_t raddr2offset(u64 raddr) {
+  return (raddr & (((u64)1 << SWAP_AREA_SHIFT) - 1)) >> PAGE_SHIFT;
+}
+
+static u64 offset2raddr(pgoff_t offset) {
+  return (offset << PAGE_SHIFT) + base_addr;
+}
+
+static int kfifos_free_daemon(void* data) {
+  int i, offset, ret;
   swp_entry_t entry;
-  idx = 0;
+  u64 count = 0;
+
   while(!kthread_should_stop()) {
     /*
     * [DirectSwap] Step1: Recycle freed pages
     */
     for(i = 0;i < NUM_KFIFOS_FREE; ++i) {
-      count = 0;
-      while (!kfifo_is_empty(kfifos_free + i) /*&& !kfifo_is_full(&central_heap)*/ && count < PAGES_PER_KFIFO_FREE) {
+      //cur_len = kfifo_len(kfifos_free + i);
+      if(!kfifo_is_empty(kfifos_free + i)) {
         ret = kfifo_out(kfifos_free + i, &entry, sizeof(entry));
         if (ret != sizeof(entry)) {
           printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 1);
@@ -51,85 +68,81 @@ static int kfifos_daemon(void* data) {
         
         offset = swp_offset(entry);
         BUG_ON(offset >= num_pages_total);
-        //BUG_ON(central_heap[offset] != 'U');
-        //central_heap[offset] = 'F';
-        push_queue_deallocator(offset);
-        /*
-        while(!kfifo_in(&central_heap, &entry, sizeof(entry))) {
-          count++;
-        }*/
-        
-        count++;
+
+        push_queue_deallocator(offset2raddr(offset));
       }
+    }
+    count++;
+    if(count % 1000000 == 0)
+      cond_resched();
+  }
+  return 0;
+}
+
+static int kfifos_daemon(void* data) {
+  int i, count, ret;
+  swp_entry_t entry;
+  //unsigned int cur_len, cur_avail;
+  
+  while(!kthread_should_stop()) {
+    atomic64_inc(&num_kfifo_daemon_loops);
+
+    count = 0;
+    while(!kfifo_is_full(kfifos_alloc + 0) && count < 64) {
+      u64 page_addr = pop_queue_allocator();
+      BUG_ON((page_addr & ((1 << PAGE_SHIFT) - 1)) != 0);
+      entry = swp_entry(MAX_SWAPFILES-1, raddr2offset(page_addr));
+
+      ret = kfifo_in(kfifos_alloc + 0, &entry, sizeof(entry));
+      if(ret != sizeof(entry)) {
+        printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 2);
+        break;
+      }
+      count++;
     }
 
     /*
     * [DirectSwap] Step2: Fill unused pages
     */
-    for(i = 0;i < NUM_KFIFOS_ALLOC; ++i) {
+    
+    for(i = 1;i < NUM_KFIFOS_ALLOC; ++i) {
       count = 0;
-      while (!kfifo_is_full(kfifos_alloc + i) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_PER_KFIFO_ALLOC) {
-        /*
-        ret = kfifo_out(&central_heap, &entry, sizeof(entry));
-        if (ret != sizeof(entry)) {
-            printk(KERN_ERR "Failed to read from FIFO (in step %d)\n", 2);
-            break;
-        }*/
-        /*
-        retry_count = 0;
-        while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
-          idx = (idx + 1) % num_pages_total;
-          retry_count++;
-        }
-        if(retry_count >= 1024) {
-          printk(" Step2: Fill unused pages failed in find free slot...\n");
-          break;
-        }*/
-        uint64_t page_addr = pop_queue_allocator();
-        entry = swp_entry(MAX_SWAPFILES-1, (page_addr >> PAGE_SHIFT));
+      if(!kfifo_is_full(kfifos_alloc + i)) {
+        u64 page_addr = pop_queue_allocator();
+        BUG_ON((page_addr & ((1 << PAGE_SHIFT) - 1)) != 0);
+        entry = swp_entry(MAX_SWAPFILES-1, raddr2offset(page_addr));
 
         ret = kfifo_in(kfifos_alloc + i, &entry, sizeof(entry));
         if(ret != sizeof(entry)) {
           printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 2);
           break;
         }
-        /*
-        central_heap[idx] = 'U';
         count++;
-        */
       }
     }
 
     /*
-    * [DirectSwap] Step3: Fill reclaim cpu kfifo
+    * [DirectSwap] Step3: Fill reclaim cpu kfifos
     */
-    //count = 0;
-    while (!kfifo_is_full(&kfifos_reclaim_alloc) /*&& !kfifo_is_empty(&central_heap)*/ && count < PAGES_IN_RECLAIM_KFIFO) {
-      /*
-      retry_count = 0;
-      while((central_heap[idx] != 'F' || idx < 10) && retry_count < 1024) {
-        idx = (idx + 1) % num_pages_total;
-        retry_count++;
-      }
-      if(retry_count >= 1024) {
-        printk(" Step3: Fill reclaim cpu kfifo failed in find free slot...\n");
-        break;
-      }*/
-      uint64_t page_addr = pop_queue_allocator();
-      entry = swp_entry(MAX_SWAPFILES-1, (page_addr >> PAGE_SHIFT));
+    for(i = 0;i < FASTSWAP_RECLAIM_CPU_NUM; ++i) {
+      count = 0;
+      while (!kfifo_is_full(kfifos_reclaim_alloc+i) && count < 64) {
+        u64 page_addr = pop_queue_allocator();
+        BUG_ON((page_addr & ((1 << PAGE_SHIFT) - 1)) != 0);
+        entry = swp_entry(MAX_SWAPFILES-1, raddr2offset(page_addr));
 
-      ret = kfifo_in(&kfifos_reclaim_alloc, &entry, sizeof(entry));
-      if(ret != sizeof(entry)) {
-        printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 3);
-        break;
+        ret = kfifo_in(kfifos_reclaim_alloc+i, &entry, sizeof(entry));
+        if(ret != sizeof(entry)) {
+          printk(KERN_ERR "Failed to write to FIFO (in step %d)\n", 3);
+          break;
+        }
+        count++;
       }
-      
-      central_heap[idx] = 'U';
-      count++;
-      
+      if(atomic64_read(&num_kfifo_daemon_loops) % 1000000 == 0) {
+        cond_resched();
+      }
     }
     
-    cond_resched();
   }
   return 0;
 }
@@ -542,6 +555,9 @@ static void __exit sswap_rdma_cleanup_module(void)
   if (thread) {
     kthread_stop(thread);
   }
+  if (thread_free) {
+    kthread_stop(thread_free);
+  }
   //kfifo_free(&central_heap);
 
   return;
@@ -845,10 +861,10 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   struct rdma_queue *q;
   //int num_swap_pages_tmp;
   //u64 page_offset = roffset;
-  u64 raddr = roffset << PAGE_SHIFT;
+  u64 raddr = offset2raddr(roffset);
   //u64 raddr_block = 0;
   //u32 rkey = get_rkey((roffset >> BLOCK_SHIFT) << BLOCK_SHIFT);
-  u32 rkey = queue_allocator->rkey;
+  u32 rkey = atomic_read(&queue_allocator->rkey);
 
   BUG_ON(roffset >= num_pages_total);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
@@ -987,7 +1003,7 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
-  rkey = queue_allocator->rkey;
+  rkey = atomic_read(&queue_allocator->rkey);
   if(rkey == 0) {
     pr_err("read_sync:remote address(%p) is invalid.\n", (void*)raddr);
     return -1;
@@ -1008,8 +1024,8 @@ EXPORT_SYMBOL(sswap_rdma_poll_load);
 int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type) {
   struct rdma_queue *q;
   //int id = remote_area_id(type);
-  u64 raddr = (roffset << PAGE_SHIFT);
-  u32 rkey = queue_allocator->rkey;
+  u64 raddr = offset2raddr(roffset);
+  u32 rkey = atomic_read(&queue_allocator->rkey);
   int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
   ret = begin_read(q, page, raddr, rkey);
@@ -1021,8 +1037,8 @@ EXPORT_SYMBOL(direct_swap_rdma_read_async);
 int direct_swap_rdma_read_sync(struct page *page, u64 roffset, int type) {
   struct rdma_queue *q;
   //int id = remote_area_id(type);
-  u64 raddr = (roffset << PAGE_SHIFT);
-  u32 rkey = queue_allocator->rkey;
+  u64 raddr = offset2raddr(roffset);
+  u32 rkey = atomic_read(&queue_allocator->rkey);
   int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
   ret = begin_read(q, page, raddr, rkey);
@@ -1034,8 +1050,8 @@ EXPORT_SYMBOL(direct_swap_rdma_read_sync);
 int direct_swap_rdma_write(struct page *page, u64 roffset, int type) {
   struct rdma_queue *q;
   //int id = remote_area_id(type);
-  u64 raddr = (roffset << PAGE_SHIFT);
-  u32 rkey = queue_allocator->rkey;
+  u64 raddr = offset2raddr(roffset);
+  u32 rkey = atomic_read(&queue_allocator->rkey);
   int ret;
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
   ret = write_queue_add(q, page, raddr, rkey);
@@ -1082,16 +1098,32 @@ inline struct rdma_queue *sswap_rdma_get_queue(unsigned int cpuid,
 }
 
 void swap_pages_timer_callback(struct timer_list *timer) {
-  int num_swap_pages_tmp = atomic_read(&num_swap_pages);
-  int num_alloc_blocks_tmp = atomic_read(&num_alloc_blocks);
-  int num_free_blocks_tmp = atomic_read(&num_free_blocks);
-  int num_free_fail_tmp = atomic_read(&num_free_fail);
+  //int num_swap_pages_tmp = atomic_read(&num_swap_pages);
+  //int num_alloc_blocks_tmp = atomic_read(&num_alloc_blocks);
+  //int num_free_blocks_tmp = atomic_read(&num_free_blocks);
+  //int num_free_fail_tmp = atomic_read(&num_free_fail);
   int num_direct_swapout_pages_done_tmp = atomic_read(&num_direct_swapout_pages_done);
   int num_direct_swapin_pages_done_tmp = atomic_read(&num_direct_swapin_pages_done);
+  //int len_of_normal_kfifo = kfifo_len(kfifos_alloc + 0);
+  //int len_of_reclaim_kfifo = kfifo_len(kfifos_reclaim_alloc + 0);
+  int num_kfifos_free_fail_tmp = atomic_read(&num_kfifos_free_fail);
+  int i;
 
-  pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
-  pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
+  //pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
+  //pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
   pr_info("num_direct_swapout_pages = %d, num_direct_swapin_pages = %d.\n", num_direct_swapout_pages_done_tmp, num_direct_swapin_pages_done_tmp);
+  for(i = 0;i < NUM_KFIFOS_ALLOC; ++i) {
+    pr_info("kfifos_alloc: id = %d, len = %d\n", i, kfifo_len(kfifos_alloc + i));
+  }
+  for(i = 0;i < NUM_KFIFOS_FREE; ++i) {
+    pr_info("kfifos_free: id = %d, len = %d\n", i, kfifo_len(kfifos_free + i));
+  }
+  for(i = 0;i < FASTSWAP_RECLAIM_CPU_NUM; ++i) {
+    pr_info("kfifos_reclaim: id = %d, len = %d.\n", i + FASTSWAP_RECLAIM_CPU, kfifo_len(kfifos_reclaim_alloc + i));
+  }
+  
+  pr_info("allocator page queue: addr = %p, begin = %d, end = %d, length = %d, first = %d.\n", queue_allocator, (int)atomic64_read(&queue_allocator->begin), (int)atomic64_read(&queue_allocator->end), (int)get_length_allocator(), (int)atomic64_read(&queue_allocator->pages[atomic64_read(&queue_allocator->begin)]));
+  pr_info("number of kfifos_free fail = %d\n", num_kfifos_free_fail_tmp);
   mod_timer(timer, jiffies + msecs_to_jiffies(swap_pages_print_interval)); 
 }
 
@@ -1245,6 +1277,14 @@ static int __init sswap_rdma_init_module(void)
   }
   kthread_bind(thread, DAEMON_CORE);
   wake_up_process(thread);
+
+  thread_free = kthread_create(kfifos_free_daemon, NULL, "directswap_kfifos_free_daemon");
+  if (IS_ERR(thread_free)) {
+    printk(KERN_ERR "Failed to create kernel thread\n");
+    return PTR_ERR(thread_free);
+  }
+  kthread_bind(thread_free, DAEMON_CORE_FREE);
+  wake_up_process(thread_free);
 
 
   pr_info("ctrl is ready for reqs\n");

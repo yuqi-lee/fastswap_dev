@@ -21,11 +21,16 @@
 #define num_groups 8
 // #define print_interval (256 * 1024)
 #define num_pages_total  (addr_space >> PAGE_SHIFT)
-#define swap_pages_print_interval 2000
+#define swap_pages_print_interval 10000
 
 extern atomic_t num_alloc_blocks;
 extern atomic_t num_free_blocks;
 extern atomic_t num_free_fail;
+extern struct allocator_page_queue *queue_allocator;
+extern struct deallocator_page_queue *queue_deallocator;
+extern struct kfifo kfifos_alloc[NUM_KFIFOS_ALLOC];
+extern struct kfifo kfifos_free[NUM_KFIFOS_FREE];
+extern struct kfifo kfifos_reclaim_alloc[FASTSWAP_RECLAIM_CPU_NUM];
 
 enum qp_type {
   QP_READ_SYNC,
@@ -88,6 +93,7 @@ struct timer_list swap_pages_timer;
 //atomic_t num_direct_swap_pages = ATOMIC_INIT(0);
 atomic_t num_direct_swapout_pages_done = ATOMIC_INIT(0);
 atomic_t num_direct_swapin_pages_done = ATOMIC_INIT(0);
+atomic64_t num_kfifo_daemon_loops = ATOMIC64_INIT(0);
 
 atomic_t num_swap_pages = ATOMIC_INIT(0);
 spinlock_t locks[num_groups];

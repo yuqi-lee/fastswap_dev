@@ -2,25 +2,26 @@
 #include <linux/kernel.h>
 #include <linux/types.h>
 #include <linux/module.h>
+#include <linux/atomic.h>
 
 #define ALLOCATE_BUFFER_SIZE (128 << 10) // 512 MB
 #define DEALLOCATE_BUFFER_SIZE (512 << 10) // 2 GB
 
 struct allocator_page_queue {
-    u32 rkey;
-    u64 begin;
-    u64 end;
-    u64 pages[ALLOCATE_BUFFER_SIZE];
+    atomic_t rkey;
+    atomic64_t begin;
+    atomic64_t end;
+    atomic64_t pages[ALLOCATE_BUFFER_SIZE];
 };
 
 struct deallocator_page_queue {
-    u64 begin;
-    u64 end;
-    u64 pages[DEALLOCATE_BUFFER_SIZE];
+    atomic64_t begin;
+    atomic64_t end;
+    atomic64_t pages[DEALLOCATE_BUFFER_SIZE];
 };
 
-struct allocator_page_queue *queue_allocator = NULL;
-struct deallocator_page_queue *queue_deallocator = NULL;
+extern struct allocator_page_queue *queue_allocator;
+extern struct deallocator_page_queue *queue_deallocator;
 
 
 u64 get_length_allocator(void);
