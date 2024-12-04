@@ -25,5 +25,5 @@ endif
 obj-m  := fastswap.o
 obj-m += fastswap_rdma.o
 obj-m += rpage_allocator.o
-obj-m += extended_entry_allocator.o
+
 CFLAGS_fastswap.o=-DBACKEND=2
