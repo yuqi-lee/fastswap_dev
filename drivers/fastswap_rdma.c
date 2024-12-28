@@ -29,6 +29,9 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 #define CQ_NUM_CQES	(QP_MAX_SEND_WR)
 #define POLL_BATCH_HIGH (QP_MAX_SEND_WR / 4)
 
+int prev_num_direct_swapout_pages_done = 0;
+int prev_num_direct_swapin_pages_done = 0;
+
 static int sswap_rdma_addone(struct ib_device *dev)
 {
   pr_info("sswap_rdma_addone() = %s\n", dev->name);
@@ -974,18 +977,18 @@ inline struct rdma_queue *sswap_rdma_get_queue(unsigned int cpuid,
 }
 
 void swap_pages_timer_callback(struct timer_list *timer) {
-  //int num_swap_pages_tmp = atomic_read(&num_swap_pages);
-  //int num_alloc_blocks_tmp = atomic_read(&num_alloc_blocks);
-  //int num_free_blocks_tmp = atomic_read(&num_free_blocks);
-  //int num_free_fail_tmp = atomic_read(&num_free_fail);
   int num_direct_swapout_pages_done_tmp = atomic_read(&num_direct_swapout_pages_done);
   int num_direct_swapin_pages_done_tmp = atomic_read(&num_direct_swapin_pages_done);
   int num_kfifos_free_fail_tmp = atomic_read(&num_kfifos_free_fail);
   struct allocator_page_queue *queue_allocator = &queues_allocator->queues[0];
 
+  int diff_num_direct_swapin_pages = num_direct_swapin_pages_done_tmp - prev_num_direct_swapin_pages_done;
+  int diff_num_direct_swapout_pages = num_direct_swapout_pages_done_tmp - prev_num_direct_swapout_pages_done;
+  prev_num_direct_swapin_pages_done = num_direct_swapin_pages_done_tmp;
+  prev_num_direct_swapout_pages_done = num_direct_swapout_pages_done_tmp;
   //pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
   //pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
-  pr_info("num_direct_swapout_pages = %d, num_direct_swapin_pages = %d.\n", num_direct_swapout_pages_done_tmp, num_direct_swapin_pages_done_tmp);
+  pr_info("num_direct_swapout_pages = %d, num_direct_swapin_pages = %d.\n", diff_num_direct_swapout_pages, diff_num_direct_swapin_pages);
   
   pr_info("allocator page queue: addr = %p, begin = %d, end = %d, length = %d, first = %d.\n", queue_allocator, (int)atomic64_read(&queue_allocator->begin), (int)atomic64_read(&queue_allocator->end), (int)get_length_allocator(0), (int)atomic64_read(&queue_allocator->pages[atomic64_read(&queue_allocator->begin)]));
   pr_info("number of kfifos_free fail = %d\n", num_kfifos_free_fail_tmp);
