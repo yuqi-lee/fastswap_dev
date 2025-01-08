@@ -23,7 +23,14 @@ clean:
 endif
 
 obj-m  := fastswap.o
-obj-m += fastswap_rdma.o
-obj-m += rpage_allocator.o
+ifeq ($(BACKEND),DRAM)
+	obj-m += fastswap_dram.o
+	CFLAGS_fastswap.o=-DBACKEND=1
+else
+	obj-m += fastswap_rdma.o
+	obj-m += rpage_allocator.o
+	CFLAGS_fastswap.o=-DBACKEND=2
+endif
+
 
 CFLAGS_fastswap.o=-DBACKEND=2
