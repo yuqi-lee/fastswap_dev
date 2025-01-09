@@ -5,6 +5,7 @@
 #include <linux/slab.h>
 #include <linux/rhashtable.h>
 #include <linux/module.h>
+#include <linux/rbtree.h>
 
 #define addr_space (1024 * 1024 * 1024 * 200l)
 #define rblock_size (4 * 1024 * 1024)
@@ -54,7 +55,7 @@ struct cpu_cache_storage {
     u32 class_free_writer[nprocs];
 };
 
-struct block_info{
+struct block_info {
     u64 raddr;
     u32 rkey;
     spinlock_t block_lock;
