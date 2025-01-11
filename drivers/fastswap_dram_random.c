@@ -4,7 +4,7 @@
 #include <linux/pagemap.h>
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
-#include "fastswap_dram.h"
+#include "fastswap_dram_random.h"
 
 #define ONEGB (1024UL*1024*1024)
 #define REMOTE_BUF_SIZE (ONEGB * 33) /* must match what server is allocating */
@@ -70,17 +70,10 @@ int push_queue(uint64_t page_addr) {
 }
 
 
-bool compare_blocks(struct rb_node *n1, const struct rb_node *n2) {
-    struct block_info *block1 = rb_entry(n1, struct block_info, block_node_rbtree);
-    struct block_info *block2 = rb_entry(n2, struct block_info, block_node_rbtree);
-    
-	return block1->cnt < block2->cnt;
-}
-
 // must obtain free_blocks_tree_lock when excute this function
 void free_remote_block(struct block_info *bi) {
-	BUG_ON(bi->free_tree_idx >= NUM_FREE_BLOCKS_TREE);
-    rb_erase(&bi->block_node_rbtree, &free_blocks_trees[bi->free_tree_idx]);
+	BUG_ON(bi->free_list_idx >= NUM_FREE_BLOCKS_LIST);
+    list_del(&bi->block_node_list);
     rhashtable_remove_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
 
     //add_free_cache(bi->raddr/*, bi->rkey*/);
@@ -96,7 +89,7 @@ void free_remote_page(uint64_t raddr) {
     uint64_t raddr_block; 
     uint64_t offset; 
     uint32_t nproc = raw_smp_processor_id();
-    uint32_t free_tree_idx = nproc % NUM_FREE_BLOCKS_TREE;
+    uint32_t free_list_idx = nproc % NUM_FREE_BLOCKS_LIST;
     //uint32_t count = 0;
     
     BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
@@ -126,18 +119,18 @@ void free_remote_page(uint64_t raddr) {
     clear_bit(offset, bi->rpages_bitmap);
 
 	if(bi->cnt == 0) {
-		BUG_ON(bi->free_tree_idx != NUM_FREE_BLOCKS_TREE);
+		BUG_ON(bi->free_list_idx != NUM_FREE_BLOCKS_LIST);
 
 		
-        bi->free_tree_idx = free_tree_idx;
+        bi->free_list_idx = free_list_idx;
 	} else {
-		BUG_ON(bi->free_tree_idx >= NUM_FREE_BLOCKS_TREE);
+		BUG_ON(bi->free_list_idx >= NUM_FREE_BLOCKS_LIST);
 
-		rb_erase(&bi->block_node_rbtree, &free_blocks_trees[bi->free_tree_idx]);
+		//rb_erase(&bi->block_node_rbtree, &free_blocks_trees[bi->free_tree_idx]);
 		//bi->free_tree_idx = free_tree_idx;
 	}
     bi->cnt += 1;
-	rb_add(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx], compare_blocks);
+	list_add(&bi->block_node_list, &free_blocks_lists[free_list_idx]);
 
     //spin_unlock(&bi->block_lock);
     //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
@@ -146,7 +139,7 @@ void free_remote_page(uint64_t raddr) {
 EXPORT_SYMBOL(free_remote_page);
 
 // must obtain "free_blocks_tree_lock" when excute this function
-int alloc_remote_block(uint32_t free_tree_idx) {
+int alloc_remote_block(uint32_t free_list_idx) {
     struct block_info *bi;
     uint64_t raddr_ = 0;
     uint32_t rkey_ = 0;
@@ -167,14 +160,14 @@ int alloc_remote_block(uint32_t free_tree_idx) {
     bi->raddr = raddr_;
     bi->rkey = rkey_;
     bi->cnt = (RBLOCK_SIZE >> PAGE_SHIFT);
-    bi->free_tree_idx = free_tree_idx;
+    bi->free_list_idx = free_list_idx;
     spin_lock_init(&bi->block_lock);
     bitmap_zero(bi->rpages_bitmap, RBLOCK_SIZE >> PAGE_SHIFT);
-    //INIT_LIST_HEAD();
-	rb_add(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx], compare_blocks);
+    INIT_LIST_HEAD(&bi->block_node_list);
 
     // insert to rhashtable (blocks_map)
     rhashtable_insert_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
+    list_add(&bi->block_node_list, &free_blocks_lists[free_list_idx]);
 
     atomic64_inc(&num_alloc_blocks);
     return 0;
@@ -189,15 +182,14 @@ uint64_t alloc_remote_page(void) {
     //int counter = 0;
     //int flag;
     uint32_t nproc = raw_smp_processor_id();
-    uint32_t free_tree_idx = nproc % NUM_FREE_BLOCKS_TREE;
+    uint32_t free_list_idx = nproc % NUM_FREE_BLOCKS_LIST;
     //uint32_t raw_free_tree_idx = free_tree_idx;
     //uint8_t locked = 0;
-	struct rb_node *first_node;
 
     spin_lock(&global_lock);
 
-    if(RB_EMPTY_ROOT(&free_blocks_trees[free_tree_idx])) {
-        ret = alloc_remote_block(free_tree_idx);
+    if(list_empty(&free_blocks_lists[free_list_idx])) {
+        ret = alloc_remote_block(free_list_idx);
         if(ret) {
             pr_err("can not alloc remote block.\n");
             //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
@@ -206,18 +198,10 @@ uint64_t alloc_remote_page(void) {
         }
     }
 
-    first_node = rb_first(&free_blocks_trees[free_tree_idx]);
-	if(!first_node) {
-		pr_err("fail to add new block to free_blocks_list\n");
-        //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
-        spin_unlock(&global_lock);
-        return 0;
-	}
-	
-    bi = rb_entry(first_node, struct block_info, block_node_rbtree);
+    bi = list_first_entry(&free_blocks_lists[free_list_idx], struct block_info, block_node_list);
 
     //BUG_ON(bi->free_list_idx != free_list_idx);
-    if(bi->free_tree_idx != free_tree_idx) {
+    if(bi->free_list_idx != free_list_idx) {
         pr_err("block_info's free_tree_idx error: 2\n");
     }
 
@@ -230,8 +214,8 @@ uint64_t alloc_remote_page(void) {
     BUG_ON(bi->cnt > (RBLOCK_SIZE >> PAGE_SHIFT));
 
     if(bi->cnt == 0) {
-        rb_erase(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx]);
-        bi->free_tree_idx = NUM_FREE_BLOCKS_TREE;
+        list_del(&bi->block_node_list);
+        bi->free_list_idx = NUM_FREE_BLOCKS_LIST;
     }
     spin_unlock(&global_lock);
 
@@ -329,26 +313,27 @@ void swap_pages_timer_callback(struct timer_list *timer) {
 }
 
 void gc_timer_callback(struct timer_list *timer) {
-  struct block_info *bi;  
-  struct rb_node *cur_node;
+  struct block_info *entry, *next_entry;  
   int i;
 
-  for(i = 0;i < NUM_FREE_BLOCKS_TREE; ++i) {
+  for(i = 0;i < NUM_FREE_BLOCKS_LIST; ++i) {
     //if(spin_trylock(&free_blocks_tree_locks[i])) {
     spin_lock(&global_lock);
-	cur_node = rb_last(&free_blocks_trees[i]);
-    while(cur_node) {
-		bi = rb_entry(cur_node, struct block_info, block_node_rbtree);
-        cur_node = rb_prev(cur_node); 
-        //spin_lock(&bi->block_lock);
-        BUG_ON(bi->free_tree_idx != i);
-        if(bi->cnt < (RBLOCK_SIZE >> PAGE_SHIFT)) {   
-			//spin_unlock(&bi->block_lock);
-            break;
+	if(spin_trylock(&free_blocks_list_locks[i])) {
+        list_for_each_entry_safe(entry, next_entry, &free_blocks_lists[i], block_node_list) {
+            spin_lock(&entry->block_lock);
+            //BUG_ON(entry->free_list_idx != i);
+            if(entry->free_list_idx != i) {
+                pr_err("entry's free list idx error: 1\n");
+            }
+            if(entry->cnt == (RBLOCK_SIZE >> PAGE_SHIFT)) {
+                free_remote_block(entry);
+                continue;
+            }
+            spin_unlock(&entry->block_lock);
         }
-		free_remote_block(bi);
+        spin_unlock(&free_blocks_list_locks[i]);
     }
-    //spin_unlock(&free_blocks_tree_locks[i]);
     spin_unlock(&global_lock);
   }
 
@@ -404,9 +389,9 @@ static int __init sswap_dram_init_module(void)
     rhashtable_init(blocks_map, &blocks_map_params);
     pr_info("blocks_map init successfully.\n");
 
-	for(i = 0;i < NUM_FREE_BLOCKS_TREE; ++i) {
-		spin_lock_init(&free_blocks_tree_locks[i]);
-		free_blocks_trees[i] = RB_ROOT;
+	for(i = 0;i < NUM_FREE_BLOCKS_LIST; ++i) {
+		spin_lock_init(&free_blocks_list_locks[i]);
+        INIT_LIST_HEAD(&free_blocks_lists[i]);
 	}
 	pr_info("free_blocks_trees init successfully.\n");
 

@@ -12,6 +12,7 @@
 
 #define B_DRAM 1
 #define B_RDMA 2
+#define B_RANDOM 3
 
 #ifndef BACKEND
 #error "Need to define BACKEND flag"
@@ -23,6 +24,9 @@
 #elif BACKEND == B_RDMA
 #define RDMA
 #include "fastswap_rdma.h"
+#elif BACKEND == B_RANDOM
+#define RANDOM
+#include "fastswap_dram_random.h"
 #else
 #error "BACKEND can only be 1 (DRAM) or 2 (RDMA)"
 #endif
