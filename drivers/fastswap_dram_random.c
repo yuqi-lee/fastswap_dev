@@ -121,8 +121,8 @@ void free_remote_page(uint64_t raddr) {
 	if(bi->cnt == 0) {
 		BUG_ON(bi->free_list_idx != NUM_FREE_BLOCKS_LIST);
 
-		
         bi->free_list_idx = free_list_idx;
+        list_add_tail(&bi->block_node_list, &free_blocks_lists[free_list_idx]);
 	} else {
 		BUG_ON(bi->free_list_idx >= NUM_FREE_BLOCKS_LIST);
 
@@ -130,7 +130,7 @@ void free_remote_page(uint64_t raddr) {
 		//bi->free_tree_idx = free_tree_idx;
 	}
     bi->cnt += 1;
-	list_add(&bi->block_node_list, &free_blocks_lists[free_list_idx]);
+	
 
     //spin_unlock(&bi->block_lock);
     //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
