@@ -14,8 +14,6 @@
 #include <linux/path.h>
 #include "fastswap_dram.h"
 
-#define ALLOCATOR_FILE "/dev/shm/allocator_page_queue"
-#define DEALLOCATOR_FILE "/dev/shm/deallocator_page_queue"
 
 #define ONEGB (1024UL*1024*1024)
 #define ALIGNMENT (4096UL)
@@ -23,9 +21,8 @@
 #define TOTAL_PAGES (8UL*1024*1024)
 #define ALLOC_DAEMON_CORE 40
 #define FREE_DAEMON_CORE 41
-#define ALLOC_DAEMON_RECLAIM_CORE 42
 #define NUM_BW_ISOLATION 16
-#define NUM_ONLINE_CORE 48
+#define NUM_ONLINE_CORE 64
 
 static void *drambuf;
 static void *local_partition_start;
@@ -33,7 +30,7 @@ extern struct allocator_page_queues *queues_allocator;
 extern struct deallocator_page_queues *queues_deallocator;
 
 static struct task_struct *thread_alloc;
-static struct task_struct *thread_alloc_reclaim;
+//static struct task_struct *thread_alloc_reclaim;
 static struct task_struct *thread_free;
 
 spinlock_t bw_lock[NUM_BW_ISOLATION];
@@ -90,10 +87,10 @@ int push_queue(uint64_t page_addr) {
 
 int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type) {
 	void *page_vaddr;
-  uint32_t nproc = raw_smp_processor_id();
+  //uint32_t nproc = raw_smp_processor_id();
  
   
-  spin_lock(&bw_lock[core_to_isolation[nproc]]);
+  //spin_lock(&bw_lock[core_to_isolation[nproc]]);
 
 	VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 	VM_BUG_ON_PAGE(!PageLocked(page), page);
@@ -106,7 +103,7 @@ int direct_swap_rdma_read_async(struct page *page, u64 roffset, int type) {
 	SetPageUptodate(page);
 	unlock_page(page);
 
-  spin_unlock(&bw_lock[core_to_isolation[nproc]]);
+  //spin_unlock(&bw_lock[core_to_isolation[nproc]]);
 	return 0;
 }
 EXPORT_SYMBOL(direct_swap_rdma_read_async);
@@ -118,16 +115,18 @@ EXPORT_SYMBOL(direct_swap_rdma_read_sync);
 
 int direct_swap_rdma_write(struct page *page, u64 roffset, int type) {
 	void *page_vaddr;
-  uint32_t nproc = raw_smp_processor_id();
+  //uint32_t nproc = raw_smp_processor_id();
 
-  spin_lock(&bw_lock[core_to_isolation[nproc]]);
+  //spin_lock(&bw_lock[core_to_isolation[nproc]]);
+
+  //BUG_ON(type != core_id_to_swap_type[nproc]);
 
 	page_vaddr = kmap_atomic(page);
 	copy_page((void *) (local_partition_start + (roffset <<  PAGE_SHIFT)), page_vaddr);
 	kunmap_atomic(page_vaddr);
 
 
-  spin_unlock(&bw_lock[core_to_isolation[nproc]]);
+  //spin_unlock(&bw_lock[core_to_isolation[nproc]]);
   //atomic64_inc(&num_swapout);
   //if(atomic64_read(&num_swapout) % 100000 == 0) {
   //  pr_info("Running on core: %d\n", raw_smp_processor_id());
@@ -239,18 +238,6 @@ static int alloc_daemon(void* data) {
       if(count % 5000000 == 0)
         cond_resched();
     }
-    /*
-    for(id = 0;id < FASTSWAP_RECLAIM_CPU_NUM; ++id) {
-      count++;
-      cur_queue_allocator_len = get_length_reclaim_allocator(id);
-      if(cur_queue_allocator_len < RECLAIM_ALLOCATE_BUFFER_SIZE - 1) {
-        addr = pop_queue();
-        push_queue_reclaim_allocator(addr, id);
-      }
-        
-      if(count % 5000000 == 0)
-        cond_resched();
-    }*/
   }
 
   return 0;   
@@ -291,12 +278,6 @@ static int __init sswap_dram_init_module(void)
         return PTR_ERR(thread_alloc);
     } 
 
-  /*
-    thread_alloc_reclaim = kthread_create(alloc_daemon_reclaim, NULL, "directswap_alloc_daemon");
-    if (IS_ERR(thread_alloc_reclaim)) {
-        printk(KERN_ERR "Failed to create kernel thread: thread alloc.\n");
-        return PTR_ERR(thread_alloc_reclaim);
-    } */
 
     thread_free = kthread_create(free_daemon, NULL, "directswap_free_daemon");
     if (IS_ERR(thread_free)) {
@@ -313,16 +294,10 @@ static int __init sswap_dram_init_module(void)
     }
 
     core_to_isolation[0] = 0;
-    //for(i = 0;i < FASTSWAP_RECLAIM_CPU_NUM; ++i) {
-    //  core_to_isolation[i+FASTSWAP_RECLAIM_CPU] = 1;
-    //}
     
 
     kthread_bind(thread_alloc, ALLOC_DAEMON_CORE);
     wake_up_process(thread_alloc);
-
-    //kthread_bind(thread_alloc_reclaim, ALLOC_DAEMON_RECLAIM_CORE);
-    //wake_up_process(thread_alloc_reclaim);
 
     kthread_bind(thread_free, FREE_DAEMON_CORE);
     wake_up_process(thread_free);
