@@ -27,109 +27,13 @@ u32 get_rkey(u64 raddr) {
     BUG_ON((raddr & ((1 << BLOCK_SHIFT) - 1)) != 0);
 
     bi = rhashtable_lookup_fast(blocks_map, &raddr, blocks_map_params);
-    if(!bi/* || bi->rkey == 0*/) {
+    if(!bi || bi->rkey == 0) {
         pr_err("cannot get rkey(with remote address:%p)\n", (void*)raddr);
         return 0;
     }
     return bi->rkey;
 }
 EXPORT_SYMBOL(get_rkey);
-
-void cpu_cache_dump(void) {
-    pr_info("cpu_cache_ block_size = %lld\n", cpu_cache_->block_size);
-}
-EXPORT_SYMBOL(cpu_cache_dump);
-
-void cpu_cache_delete(void) {
-    vunmap(cpu_cache_);
-}
-EXPORT_SYMBOL(cpu_cache_delete);
-
-int cpu_cache_init(void) {
-    struct path path_;
-    struct address_space *addr_space_;
-    struct page *page_;
-    struct page **pages_ = NULL;
-    void **slot_;
-    struct radix_tree_iter iter_;
-    int i = 0;
-    int ret;
-
-    ret = kern_path("/dev/shm/cpu_cache", LOOKUP_FOLLOW, &path_);
-    if (ret != 0) {
-        // handle error
-        pr_err("debug: cannot find /cpu_cache with error code %d\n", ret);
-        return -1;
-    }
-
-    addr_space_ = path_.dentry->d_inode->i_mapping;
-    if(addr_space_ == NULL) {
-        pr_err("cannot get address space\n");
-        return -1;
-    }
-    pr_info("num of pages: %ld\n", addr_space_->nrpages);
-
-    pages_ = (struct page **) kmalloc(sizeof(struct page *) * addr_space_->nrpages, GFP_KERNEL);
-    if(pages_ == NULL) {
-        pr_err("Bad alloc for pages_(struct page**)\n");
-        return -1;
-    }
-    
-    radix_tree_iter_init(&iter_, 0);
-    radix_tree_for_each_slot(slot_, &addr_space_->i_pages, &iter_, 0) {
-        page_ = radix_tree_deref_slot(slot_);
-        // do something with page
-        pages_[i] = page_;
-        pr_info("%d page ptr: %p\n", i, pages_[i]);
-        i++;
-    }
-
-    if(i != addr_space_->nrpages) {
-        pr_info("i != nrpages\n");
-    } else {
-        pr_info("i == nrpages\n");
-    }
-    // return 0;
-
-    cpu_cache_ = (struct cpu_cache_storage *) vmap(pages_, addr_space_->nrpages, VM_MAP, PAGE_KERNEL);
-    if(cpu_cache_ == NULL) {
-        pr_err("Bad v-mapping for cpu_cache_\n");
-        kfree(pages_);
-        return -1;
-    }
-
-    pr_info("cpu_cache_ address is %p\n", (void*)cpu_cache_);
-
-    kfree(pages_);
-    return 0;
-}
-EXPORT_SYMBOL(cpu_cache_init);
-
-u32 get_length_fetch(u32 nproc) {
-    u32 writer = cpu_cache_->writer[nproc];
-    u32 reader = cpu_cache_->reader[nproc];
-    if (writer == reader) {
-        return 0;
-    }
-    if (writer > reader) {
-        return (writer - reader);
-    } else {
-        return (max_alloc_item - reader + writer);
-    }
-}
-
-u32 get_length_free(u32 nproc) {
-    u32 writer = cpu_cache_->free_writer[nproc];
-    u32 reader = cpu_cache_->free_reader[nproc];
-    if (writer == reader) {
-        return 0;
-    }
-    if (writer > reader) {
-        return (writer - reader);
-    } else {
-        return (max_free_item - reader + writer);
-    }
-}
 
 int fetch_cache(u64 *raddr, u32 *rkey) {
     u32 nproc = raw_smp_processor_id();

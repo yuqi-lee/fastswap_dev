@@ -8,6 +8,7 @@
 static struct sswap_rdma_ctrl *gctrl;
 static int serverport;
 static int numqueues;
+static int rpc_queue_id;
 static int numcpus;
 static char serverip[INET_ADDRSTRLEN];
 static char clientip[INET_ADDRSTRLEN];
@@ -27,6 +28,304 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 #define QP_MAX_SEND_WR	(4096)
 #define CQ_NUM_CQES	(QP_MAX_SEND_WR)
 #define POLL_BATCH_HIGH (QP_MAX_SEND_WR / 4)
+#define RDMA_TIMEOUT_US 1000000 // 1s
+
+
+int send_message_to_remote(int message_type)
+{
+	int ret = 0;
+	//const struct ib_recv_wr *recv_bad_wr;
+	const struct ib_send_wr *send_bad_wr;
+	struct rdma_queue *q;
+  uint64_t start;
+  struct ib_wc wc;
+  int rc;
+
+	q = &(gctrl->queues[rpc_queue_id]);
+	gctrl->rdma_send_req.send_buf->type = message_type;
+
+  /*
+	// post a 2-sided RDMA recv wr first.
+	ret = ib_post_recv(q->qp, &gctrl->rdma_recv_req.rq_wr,
+			   &recv_bad_wr);
+	if (ret) {
+		pr_err("%s, Post 2-sided message to receive data failed.\n",
+		       __func__);
+		return ret;
+	}*/
+
+	pr_debug("Send a Message to memory server. Message type is : %d \n", message_type);
+	ret = ib_post_send(q->qp, &gctrl->rdma_send_req.sq_wr,
+			   &send_bad_wr);
+	if (ret) {
+		pr_err("%s: BIND_SINGLE MSG send error %d\n", __func__, ret);
+    return ret;
+	}
+
+  start = TIME_NOW;
+  ret = -1;
+  while (true) {
+    if (TIME_DURATION_US(start, TIME_NOW) > RDMA_TIMEOUT_US) {
+      pr_err("rdma_remote_write timeout\n");
+      return -1;
+    }
+    rc = ib_poll_cq(q->cq, 1, &wc);
+    if (rc > 0) {
+      if (IB_WC_SUCCESS == wc.status) {
+        // Break out as operation completed successfully
+        // printf("Break out as operation completed successfully\n");
+        ret = 0;
+        break;
+      } else if (IB_WC_WR_FLUSH_ERR == wc.status) {
+        pr_err("cmd_send IBV_WC_WR_FLUSH_ERR");
+        break;
+      } else if (IB_WC_RNR_RETRY_EXC_ERR == wc.status) {
+        pr_err("cmd_send IBV_WC_RNR_RETRY_EXC_ERR");
+        break;
+      } else {
+        pr_err("cmd_send ibv_poll_cq status error");
+        break;
+      }
+    } else if (0 == rc) {
+      continue;
+    } else {
+      pr_err("ib_poll_cq fail");
+      break;
+    }
+  }
+
+	return ret;
+}
+
+
+int rdma_alloc_remote_block(uint64_t *addr, uint32_t *rkey) {
+  int ret = 0;
+	struct rdma_queue *q;
+  uint64_t start;
+
+  gctrl->rdma_recv_req.recv_buf->status = IDLE;
+  gctrl->rdma_send_req.send_buf->status = WORK;
+	q = &(gctrl->queues[rpc_queue_id]);
+	ret = send_message_to_remote(ALLOCATE_BLOCK);
+	if (ret) {
+		pr_err("%s, Post 2-sided message to remote server failed.\n",
+		       __func__);
+	}
+
+  while(gctrl->rdma_recv_req.recv_buf->status == IDLE) {
+    if (TIME_DURATION_US(start, TIME_NOW) > RDMA_TIMEOUT_US) {
+      pr_err("wait for request completion timeout: allocate_remote_page.\n");
+      return -1;
+    }
+  }
+
+  *addr = gctrl->rdma_recv_req.recv_buf->addr;
+  *rkey = gctrl->rdma_recv_req.recv_buf->addr;
+  
+  return 0;
+}
+
+int rdma_free_remote_block(uint64_t addr, uint32_t rkey) {
+  int ret = 0;
+	struct rdma_queue *q;
+  //uint64_t start;
+
+  gctrl->rdma_recv_req.recv_buf->status = IDLE;
+  gctrl->rdma_send_req.send_buf->addr = addr;
+  gctrl->rdma_send_req.send_buf->rkey = rkey;
+	q = &(gctrl->queues[rpc_queue_id]);
+	ret = send_message_to_remote(FREE_BLOCK);
+	if (ret) {
+		pr_err("%s, Post 2-sided message to remote server failed.\n",
+		       __func__);
+	}
+
+  /*
+  while(gctrl->rdma_recv_req.recv_buf->status == IDLE) {
+    if (TIME_DURATION_US(start, TIME_NOW) > RDMA_TIMEOUT_US) {
+      pr_err("wait for request completion timeout: allocate_remote_page.\n");
+      return -1;
+    }
+  }
+
+  *addr = (struct message*)gctrl->rdma_recv_req.recv_buf->addr;
+  *rkey = (struct message*)gctrl->rdma_send_req.recv_buf->addr;*/
+  
+  return 0;
+}
+
+// must obtain free_blocks_tree_lock when excute this function
+void free_remote_block(struct block_info *bi) {
+	BUG_ON(bi->free_tree_idx >= NUM_FREE_BLOCKS_TREE);
+    rb_erase(&bi->block_node_rbtree, &free_blocks_trees[bi->free_tree_idx]);
+    rhashtable_remove_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
+
+    //add_free_cache(bi->raddr/*, bi->rkey*/);
+	  //push_queue(bi->raddr);
+    rdma_free_remote_block(bi->raddr, bi->rkey);
+    kfree(bi);
+
+    atomic64_inc(&num_free_blocks);
+}
+EXPORT_SYMBOL(free_remote_block);
+
+void free_remote_page(uint64_t raddr) {
+    struct block_info *bi = NULL;
+    uint64_t raddr_block; 
+    uint64_t offset; 
+    uint32_t nproc = raw_smp_processor_id();
+    uint32_t free_tree_idx = nproc % NUM_FREE_BLOCKS_TREE;
+    //uint32_t count = 0;
+    
+    BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
+    spin_lock(&global_lock);
+
+    raddr_block = raddr >> BLOCK_SHIFT;
+    raddr_block = raddr_block << BLOCK_SHIFT;
+    bi = rhashtable_lookup_fast(blocks_map, &raddr_block, blocks_map_params);
+    if(!bi) {
+        pr_err("the page being free(%p) is not exit: cannot find out block_info.\n", (void*)raddr);
+        spin_unlock(&global_lock);
+        return;
+    }
+
+    BUG_ON(raddr_block != bi->raddr);
+    BUG_ON(raddr < bi->raddr);
+
+    //spin_lock(&free_blocks_tree_locks[free_tree_idx]);
+    //spin_lock(&bi->block_lock);
+    
+
+    offset = (raddr - bi->raddr) >> PAGE_SHIFT;
+    BUG_ON(offset >= (RBLOCK_SIZE >> PAGE_SHIFT));
+	BUG_ON(!test_bit(offset, bi->rpages_bitmap));
+	BUG_ON(bi->cnt >= (RBLOCK_SIZE >> PAGE_SHIFT));
+
+    clear_bit(offset, bi->rpages_bitmap);
+
+	if(bi->cnt == 0) {
+		BUG_ON(bi->free_tree_idx != NUM_FREE_BLOCKS_TREE);
+
+		
+        bi->free_tree_idx = free_tree_idx;
+	} else {
+		BUG_ON(bi->free_tree_idx >= NUM_FREE_BLOCKS_TREE);
+
+		rb_erase(&bi->block_node_rbtree, &free_blocks_trees[bi->free_tree_idx]);
+		//bi->free_tree_idx = free_tree_idx;
+	}
+    bi->cnt += 1;
+	rb_add(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx], compare_blocks);
+
+    //spin_unlock(&bi->block_lock);
+    //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
+    spin_unlock(&global_lock);
+}
+EXPORT_SYMBOL(free_remote_page);
+
+// must obtain "free_blocks_tree_lock" when excute this function
+int alloc_remote_block(uint32_t free_tree_idx) {
+    struct block_info *bi;
+    uint64_t raddr_ = 0;
+    uint32_t rkey_ = 0;
+
+    //raddr_ = pop_queue();
+    rdma_alloc_remote_block(&raddr_, &rkey_);
+    if(raddr_ == 0) {
+        pr_err("alloc_remote_block failed on pop global queue.\n");
+        return -1;
+    }
+    
+    bi = kmalloc(sizeof(struct block_info), GFP_KERNEL);
+    if(!bi) {
+        pr_err("init block meta data failed.\n");
+        return -1;
+    }
+
+    // block_info init
+    bi->raddr = raddr_;
+    bi->rkey = rkey_;
+    bi->cnt = (RBLOCK_SIZE >> PAGE_SHIFT);
+    bi->free_tree_idx = free_tree_idx;
+    spin_lock_init(&bi->block_lock);
+    bitmap_zero(bi->rpages_bitmap, RBLOCK_SIZE >> PAGE_SHIFT);
+    //INIT_LIST_HEAD();
+	rb_add(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx], compare_blocks);
+
+    // insert to rhashtable (blocks_map)
+    rhashtable_insert_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
+
+    atomic64_inc(&num_alloc_blocks);
+    return 0;
+}
+EXPORT_SYMBOL(alloc_remote_block);
+
+bool compare_blocks(struct rb_node *n1, const struct rb_node *n2) {
+    struct block_info *block1 = rb_entry(n1, struct block_info, block_node_rbtree);
+    struct block_info *block2 = rb_entry(n2, struct block_info, block_node_rbtree);
+    
+	return block1->cnt < block2->cnt;
+}
+
+uint64_t alloc_remote_page(void) {
+    struct block_info *bi/*, *entry, *next_entry*/;
+    uint64_t offset;
+    uint64_t raddr;
+    int ret;
+    //int counter = 0;
+    //int flag;
+    uint32_t nproc = raw_smp_processor_id();
+    uint32_t free_tree_idx = nproc % NUM_FREE_BLOCKS_TREE;
+    //uint32_t raw_free_tree_idx = free_tree_idx;
+    //uint8_t locked = 0;
+	struct rb_node *first_node;
+
+    spin_lock(&global_lock);
+
+    if(RB_EMPTY_ROOT(&free_blocks_trees[free_tree_idx])) {
+        ret = alloc_remote_block(free_tree_idx);
+        if(ret) {
+            pr_err("can not alloc remote block.\n");
+            //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
+            spin_unlock(&global_lock);
+            return 0;
+        }
+    }
+
+    first_node = rb_first(&free_blocks_trees[free_tree_idx]);
+	if(!first_node) {
+		pr_err("fail to add new block to free_blocks_list\n");
+        //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
+        spin_unlock(&global_lock);
+        return 0;
+	}
+	
+    bi = rb_entry(first_node, struct block_info, block_node_rbtree);
+
+    //BUG_ON(bi->free_list_idx != free_list_idx);
+    if(bi->free_tree_idx != free_tree_idx) {
+        pr_err("block_info's free_tree_idx error: 2\n");
+    }
+
+    //spin_lock(&bi->block_lock);
+    offset = find_first_zero_bit(bi->rpages_bitmap, RBLOCK_SIZE >> PAGE_SHIFT);
+    BUG_ON(offset >= (RBLOCK_SIZE >> PAGE_SHIFT));
+    set_bit(offset, bi->rpages_bitmap);
+    
+    bi->cnt -= 1;
+    BUG_ON(bi->cnt > (RBLOCK_SIZE >> PAGE_SHIFT));
+
+    if(bi->cnt == 0) {
+        rb_erase(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx]);
+        bi->free_tree_idx = NUM_FREE_BLOCKS_TREE;
+    }
+    spin_unlock(&global_lock);
+
+    raddr = bi->raddr + (offset << PAGE_SHIFT);
+    return raddr;
+}
+EXPORT_SYMBOL(alloc_remote_page);
+
 
 static int sswap_rdma_addone(struct ib_device *dev)
 {
@@ -45,6 +344,40 @@ static struct ib_client sswap_rdma_ib_client = {
   .add    = sswap_rdma_addone,
   .remove = sswap_rdma_removeone
 };
+
+void setup_message_wr(struct sswap_rdma_ctrl *ctrl)
+{
+	ctrl->rdma_recv_req.recv_sgl.addr =
+		ctrl->rdma_recv_req.recv_dma_addr;
+	ctrl->rdma_recv_req.recv_sgl.length = sizeof(struct message);
+	ctrl->rdma_recv_req.recv_sgl.lkey =
+		ctrl->rdev->dev->local_dma_lkey;
+
+	ctrl->rdma_recv_req.rq_wr.sg_list =
+		&(ctrl->rdma_recv_req.recv_sgl);
+	ctrl->rdma_recv_req.rq_wr.num_sge = 1;
+	//ctrl->rdma_recv_req.cqe.done = two_sided_message_done;
+	ctrl->rdma_recv_req.rq_wr.wr_cqe =
+		&(ctrl->rdma_recv_req.cqe);
+
+	ctrl->rdma_send_req.send_sgl.addr =
+		ctrl->rdma_send_req.send_dma_addr;
+	ctrl->rdma_send_req.send_sgl.length = sizeof(struct message);
+	ctrl->rdma_send_req.send_sgl.lkey =
+		ctrl->rdev->dev->local_dma_lkey;
+
+	ctrl->rdma_send_req.sq_wr.opcode = IB_WR_SEND;
+	ctrl->rdma_send_req.sq_wr.send_flags = IB_SEND_SIGNALED;
+	ctrl->rdma_send_req.sq_wr.sg_list =
+		&ctrl->rdma_send_req.send_sgl;
+	ctrl->rdma_send_req.sq_wr.num_sge = 1;
+	//ctrl->rdma_send_req.cqe.done = two_sided_message_done;
+	ctrl->rdma_send_req.sq_wr.wr_cqe =
+		&(ctrl->rdma_send_req.cqe);
+
+	return;
+}
+
 
 static struct sswap_rdma_dev *sswap_rdma_get_device(struct rdma_queue *q)
 {
@@ -74,6 +407,8 @@ static struct sswap_rdma_dev *sswap_rdma_get_device(struct rdma_queue *q)
     }
 
     q->ctrl->rdev = rdev;
+
+    setup_rdma_ctrl_comm_buffer(q->ctrl);
   }
 
   return q->ctrl->rdev;
@@ -84,6 +419,74 @@ out_free_dev:
   kfree(rdev);
 out_err:
   return NULL;
+}
+
+int setup_rdma_ctrl_comm_buffer(struct sswap_rdma_ctrl *ctrl)
+{
+	int ret = 0;
+
+	if (ctrl->rdev == NULL) {
+		pr_err("%s, ctrl->rdev is NULL. too early to regiseter RDMA buffer.\n",
+		       __func__);
+		goto err;
+	}
+
+	ret = setup_buffers(ctrl);
+	if (unlikely(ret)) {
+		pr_err("%s, Bind DMA buffer error\n", __func__);
+		goto err;
+	}
+
+err:
+	return ret;
+}
+
+u32 get_rkey(u64 raddr) {
+    struct block_info *bi = NULL;
+    
+    BUG_ON((raddr & ((1 << BLOCK_SHIFT) - 1)) != 0);
+
+    bi = rhashtable_lookup_fast(blocks_map, &raddr, blocks_map_params);
+    if(!bi || bi->rkey == 0) {
+        pr_err("cannot get rkey(with remote address:%p)\n", (void*)raddr);
+        return 0;
+    }
+    return bi->rkey;
+}
+EXPORT_SYMBOL(get_rkey);
+
+
+int setup_buffers(struct sswap_rdma_ctrl *ctrl)
+{
+	int ret = 0;
+	ctrl->rdma_recv_req.recv_buf =
+		kzalloc(sizeof(struct message), GFP_KERNEL);
+	ctrl->rdma_send_req.send_buf =
+		kzalloc(sizeof(struct message), GFP_KERNEL);
+
+	ctrl->rdma_recv_req.recv_dma_addr =
+		ib_dma_map_single(ctrl->rdev->dev,
+				  ctrl->rdma_recv_req.recv_buf,
+				  sizeof(struct message), DMA_BIDIRECTIONAL);
+	ctrl->rdma_send_req.send_dma_addr =
+		ib_dma_map_single(ctrl->rdev->dev,
+				  ctrl->rdma_send_req.send_buf,
+				  sizeof(struct message), DMA_BIDIRECTIONAL);
+
+	pr_debug("%s, Got dma/bus address 0x%llx, for the recv_buf 0x%llx \n",
+		 __func__,
+		 (unsigned long long)ctrl->rdma_recv_req.recv_dma_addr,
+		 (unsigned long long)ctrl->rdma_recv_req.recv_buf);
+	pr_debug("%s, Got dma/bus address 0x%llx, for the send_buf 0x%llx \n",
+		 __func__,
+		 (unsigned long long)ctrl->rdma_send_req.send_dma_addr,
+		 (unsigned long long)ctrl->rdma_send_req.send_buf);
+
+	setup_message_wr(ctrl);
+	pr_debug("%s, allocated & registered buffers...\n", __func__);
+	pr_debug("%s is done. \n", __func__);
+
+	return ret;
 }
 
 static void sswap_rdma_qp_event(struct ib_event *e, void *c)
@@ -206,8 +609,6 @@ static int sswap_rdma_route_resolved(struct rdma_queue *q,
   param.initiator_depth = 16;
   param.retry_count = 7;
   param.rnr_retry_count = 7;
-  param.private_data = 0;
-  param.private_data_len = 1;
 
   pr_info("max_qp_rd_atom=%d max_qp_init_rd_atom=%d\n",
       q->ctrl->rdev->dev->attrs.max_qp_rd_atom,
@@ -495,15 +896,9 @@ inline static int sswap_rdma_post_rdma(struct rdma_queue *q, struct rdma_req *qe
   rdma_wr.wr.num_sge = 1;
   rdma_wr.wr.opcode  = op;
   rdma_wr.wr.send_flags = IB_SEND_SIGNALED;
-  rdma_wr.remote_addr = /*q->ctrl->servermr.baseaddr +*/ raddr;
+  rdma_wr.remote_addr = raddr;
 
-  //bi = rhashtable_lookup_fast(blocks_map, &raddr_, blocks_map_params);
-  //if(!bi || bi->rkey == 0) {
-    //pr_err("cannot get rkey\n");
-    //return -1;
-  //}
   rdma_wr.rkey = get_rkey(raddr_block);
-  //rdma_wr.rkey = rkey;
   if(rdma_wr.rkey == 0) {
     pr_err("remote address(%p) is invalid.\n", (void*)raddr);
     return -1;
@@ -670,7 +1065,7 @@ static inline int drain_queue(struct rdma_queue *q)
 }
 
 static inline int write_queue_add(struct rdma_queue *q, struct page *page,
-				  u64 roffset/*, u32 rkey*/)
+				  u64 roffset)
 {
   struct rdma_req *req;
   struct ib_device *dev = q->ctrl->rdev->dev;
@@ -694,7 +1089,7 @@ static inline int write_queue_add(struct rdma_queue *q, struct page *page,
 }
 
 static inline int begin_read(struct rdma_queue *q, struct page *page,
-			     u64 roffset/*, u32 rkey*/)
+			     u64 roffset)
 {
   struct rdma_req *req;
   struct ib_device *dev = q->ctrl->rdev->dev;
@@ -714,7 +1109,7 @@ static inline int begin_read(struct rdma_queue *q, struct page *page,
     return ret;
 
   req->cqe.done = sswap_rdma_read_done;
-  ret = sswap_rdma_post_rdma(q, req, &sge, roffset/*, rkey*/,IB_WR_RDMA_READ);
+  ret = sswap_rdma_post_rdma(q, req, &sge, roffset,IB_WR_RDMA_READ);
   return ret;
 }
 
@@ -722,47 +1117,28 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 {
   int ret;
   struct rdma_queue *q;
-  //int num_swap_pages_tmp;
   u64 page_offset = roffset;
   u64 raddr = offset_to_rpage_addr[page_offset];
-  //u64 raddr_block = 0;
-  //u32 rkey = 0;
 
   BUG_ON(roffset >= num_pages_total);
   VM_BUG_ON_PAGE(!PageSwapCache(page), page);
 
   if(raddr == 0) {
-    //spin_lock(locks+ (page_offset % num_groups));
     raddr = alloc_remote_page();
     if(raddr == 0) {
       pr_err("bad remote page alloc\n");
-      //spin_unlock(locks + (page_offset % num_groups));
       return -1;
     }
     offset_to_rpage_addr[page_offset] = raddr;
-    // spin_unlock(locks + (page_offset % num_groups));
 
-    atomic_inc(&num_swap_pages);
-    /*
-    num_swap_pages_tmp = atomic_read(&num_swap_pages);
-    if(num_swap_pages_tmp % print_interval == 0) {
-      pr_info("num_swap_pages = %d, swap memory = %d GB\n", num_swap_pages_tmp, (num_swap_pages_tmp >> 18));
-    }*/
-
+    atomic64_inc(&num_swap_pages);
   }
 
   BUG_ON(raddr == 0);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_WRITE_SYNC);
 
-  //raddr_block = raddr >> BLOCK_SHIFT;
-  //raddr_block = raddr_block << BLOCK_SHIFT;
-  //rkey = get_rkey(raddr_block);
-  //if(rkey == 0) {
-    //pr_err("read_async:remote address(%p) is invalid.\n", (void*)raddr);
-    //return -1;
-  //}
-  ret = write_queue_add(q, page, raddr/*, rkey*/);
+  ret = write_queue_add(q, page, raddr);
   BUG_ON(ret);
   drain_queue(q);
 
@@ -772,41 +1148,8 @@ EXPORT_SYMBOL(sswap_rdma_write);
 
 static int sswap_rdma_recv_remotemr_fake(struct sswap_rdma_ctrl *ctrl)
 {
-  ctrl->servermr.baseaddr = 0;
-  ctrl->servermr.key = 0;
   return 0;
 }
-
-/*
-static int sswap_rdma_recv_remotemr(struct sswap_rdma_ctrl *ctrl)
-{
-  struct rdma_req *qe;
-  int ret;
-  struct ib_device *dev;
-
-  pr_info("start: %s\n", __FUNCTION__);
-  dev = ctrl->rdev->dev;
-
-  ret = get_req_for_buf(&qe, dev, &(ctrl->servermr), sizeof(ctrl->servermr),
-			DMA_FROM_DEVICE);
-  if (unlikely(ret))
-    goto out;
-
-  qe->cqe.done = sswap_rdma_recv_remotemr_done;
-
-  ret = sswap_rdma_post_recv(&(ctrl->queues[0]), qe, sizeof(struct sswap_rdma_memregion));
-
-  if (unlikely(ret))
-    goto out_free_qe;
-
-  sswap_rdma_wait_completion(ctrl->queues[0].cq, qe);
-
-out_free_qe:
-  kmem_cache_free(req_cache, qe);
-out:
-  return ret;
-}
-*/
 
 /* page is unlocked when the wr is done.
  * posts an RDMA read on this cpu's qp */
@@ -815,8 +1158,6 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int ret;
   u64 raddr = offset_to_rpage_addr[roffset];
-  //u64 raddr_block;
-  //u32 rkey = 0;
 
   BUG_ON(roffset >= num_pages_total);
   BUG_ON(raddr == 0);
@@ -827,13 +1168,6 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_ASYNC);
   
-  //raddr_block = raddr >> BLOCK_SHIFT;
-  //raddr_block = raddr_block << BLOCK_SHIFT;
-  //rkey = get_rkey(raddr_block);
-  //if(rkey == 0) {
-    //pr_err("read_async:remote address(%p) is invalid.\n", (void*)raddr);
-    //return -1;
-  //}
   ret = begin_read(q, page, raddr/*, rkey*/);
 
 
@@ -842,27 +1176,16 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 EXPORT_SYMBOL(sswap_rdma_read_async);
 
 void sswap_rdma_free_page(u64 roffset) {
-  //int num_swap_pages_tmp;
-  int page_offset = roffset/*>> PAGE_SHIFT*/;
+  int page_offset = roffset;
 
   BUG_ON(roffset >= num_pages_total);
 
-  //spin_lock(locks + (page_offset % num_groups));
   if(offset_to_rpage_addr[page_offset] == 0) {
-    //pr_err("no mapping for the page being free\n");
-    //spin_unlock(locks + (page_offset % num_groups));
     return;
   }
   free_remote_page(offset_to_rpage_addr[page_offset]);
   offset_to_rpage_addr[page_offset] = 0;
-  //spin_unlock(locks + (page_offset % num_groups));
-  atomic_dec(&num_swap_pages);
-
-  /*
-  num_swap_pages_tmp = atomic_read(&num_swap_pages);
-  if(num_swap_pages_tmp % print_interval == 0) {
-      pr_info("num_swap_pages = %d\n", num_swap_pages_tmp);
-  }*/
+  atomic64_dec(&num_swap_pages);
 
   return;
 }
@@ -873,8 +1196,6 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   struct rdma_queue *q;
   int ret;
   u64 raddr = offset_to_rpage_addr[roffset];
-  //u64 raddr_block;
-  //u32 rkey = 0;
 
   BUG_ON(raddr == 0);
   BUG_ON(roffset >= num_pages_total);
@@ -884,14 +1205,7 @@ int sswap_rdma_read_sync(struct page *page, u64 roffset)
   VM_BUG_ON_PAGE(PageUptodate(page), page);
 
   q = sswap_rdma_get_queue(smp_processor_id(), QP_READ_SYNC);
-  //raddr_block = raddr >> BLOCK_SHIFT;
-  //raddr_block = raddr_block << BLOCK_SHIFT;
-  //rkey = get_rkey(raddr_block);
-  //if(rkey == 0) {
-    //pr_err("read_sync:remote address(%p) is invalid.\n", (void*)raddr);
-    //return -1;
-  //}
-  ret = begin_read(q, page, raddr/*, rkey*/);
+  ret = begin_read(q, page, raddr);
 
   return ret;
 }
@@ -937,83 +1251,27 @@ inline struct rdma_queue *sswap_rdma_get_queue(unsigned int cpuid,
 }
 
 void swap_pages_timer_callback(struct timer_list *timer) {
-  int num_swap_pages_tmp = atomic_read(&num_swap_pages);
-  int num_alloc_blocks_tmp = atomic_read(&num_alloc_blocks);
-  int num_free_blocks_tmp = atomic_read(&num_free_blocks);
-  int num_free_fail_tmp = atomic_read(&num_free_fail);
+  int num_alloc_blocks_tmp = atomic64_read(&num_alloc_blocks);
+  int num_free_blocks_tmp = atomic64_read(&num_free_blocks);
+  int num_free_fail_tmp = atomic64_read(&num_free_fail);
 
-  pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
   pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
-  mod_timer(timer, jiffies + msecs_to_jiffies(swap_pages_print_interval)); 
+  mod_timer(timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL)); 
 }
-
-/*
-static int sswap_rdma_write_read_test(void)
-{
-  struct page *page_ptr = NULL;
-  void *page_vaddr;
-  int* int_ptr;
-  int ret;
-
-  page_ptr = alloc_pages(GFP_KERNEL, 0);
-  if (!page_ptr) {
-    // handle error
-    pr_err("cannot alloc physical frame.\n");
-    return -1;
-  }
-
-  page_vaddr = page_address(page_ptr);
-  int_ptr = (int*) page_vaddr;
-  *int_ptr = 325423;
-
-  ret = sswap_rdma_write(page_ptr, num_pages_total - 1);
-  if(ret) {
-    pr_err("write page failed\n");
-    return -1;
-  }
-
-  msleep(1000);
-
-  *int_ptr = 11111;
-
-  BUG_ON(*int_ptr != 11111);
-
-  ret = sswap_rdma_read_sync(page_ptr, num_pages_total - 1);
-  if(ret) {
-    pr_err("read page failed\n");
-    return -1;
-  }
-  
-  msleep(1000);
-
-  page_vaddr = page_address(page_ptr);
-  int_ptr = (int*) page_vaddr;
-  //BUG_ON(*int_ptr != 325423);
-
-  if(*int_ptr == 325423) {
-    pr_info("test pass\n");
-  } else {
-    pr_err("test failed with int = %d\n",(*int_ptr));
-    return -1;
-  }
-
-  __free_pages(page_ptr, 0);
-
-  sswap_rdma_free_page(num_pages_total - 1);
-
-  return 0;
-}*/
 
 static int __init sswap_rdma_init_module(void)
 {
   int ret;
   int i = 0;
+  uint64_t raddr = 0;
+  uint32_t rkey = 0;
 
   pr_info("start: %s\n", __FUNCTION__);
   pr_info("* RDMA BACKEND *");
 
   numcpus = num_online_cpus();
-  numqueues = numcpus * 3;
+  numqueues = numcpus * 3 + 1;
+  rpc_queue_id = numqueues - 1;
 
   req_cache = kmem_cache_create("sswap_req_cache", sizeof(struct rdma_req), 0,
                       SLAB_TEMPORARY | SLAB_HWCACHE_ALIGN, NULL);
@@ -1038,9 +1296,6 @@ static int __init sswap_rdma_init_module(void)
     return -ENODEV;
   }
 
-  for(i = 0;i < num_groups; ++i) {
-    spin_lock_init(locks + i);
-  }
   
   for(i = 0;i < num_pages_total; ++i) {
     offset_to_rpage_addr[i] = 0; 
@@ -1054,9 +1309,15 @@ static int __init sswap_rdma_init_module(void)
   //}
 
   timer_setup(&swap_pages_timer, swap_pages_timer_callback, 0);
-  mod_timer(&swap_pages_timer, jiffies + msecs_to_jiffies(swap_pages_print_interval));
+  mod_timer(&swap_pages_timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL));
 
   pr_info("ctrl is ready for reqs\n");
+
+  /* rpc test */
+
+  rdma_alloc_remote_block(&raddr, &rkey);
+  pr_info("rblock address: %lld, rkey: %d", raddr, rkey);
+
   return 0;
 }
 
