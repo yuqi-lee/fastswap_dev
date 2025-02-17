@@ -29,6 +29,9 @@ ifeq ($(BACKEND),RDMA)
 else ifeq ($(BACKEND),RANDOM)
 	obj-m += fastswap_dram_random.o
 	CFLAGS_fastswap.o=-DBACKEND=3
+else ifeq ($(BACKEND),PAGE)
+	obj-m += fastswap_dram_4k.o
+	CFLAGS_fastswap.o=-DBACKEND=3
 else
 	obj-m += fastswap_dram.o
 	CFLAGS_fastswap.o=-DBACKEND=1

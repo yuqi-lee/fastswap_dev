@@ -34,7 +34,7 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 int send_message_to_remote(int message_type)
 {
 	int ret = 0;
-	//const struct ib_recv_wr *recv_bad_wr;
+	const struct ib_recv_wr *recv_bad_wr;
 	const struct ib_send_wr *send_bad_wr;
 	struct rdma_queue *q;
   uint64_t start;
@@ -44,15 +44,15 @@ int send_message_to_remote(int message_type)
 	q = &(gctrl->queues[rpc_queue_id]);
 	gctrl->rdma_send_req.send_buf->type = message_type;
 
-  /*
+  
 	// post a 2-sided RDMA recv wr first.
 	ret = ib_post_recv(q->qp, &gctrl->rdma_recv_req.rq_wr,
 			   &recv_bad_wr);
 	if (ret) {
 		pr_err("%s, Post 2-sided message to receive data failed.\n",
 		       __func__);
-		return ret;
-	}*/
+		return -1;
+	}
 
 	pr_debug("Send a Message to memory server. Message type is : %d \n", message_type);
 	ret = ib_post_send(q->qp, &gctrl->rdma_send_req.sq_wr,
@@ -120,7 +120,7 @@ int rdma_alloc_remote_block(uint64_t *addr, uint32_t *rkey) {
   }
 
   *addr = gctrl->rdma_recv_req.recv_buf->addr;
-  *rkey = gctrl->rdma_recv_req.recv_buf->addr;
+  *rkey = gctrl->rdma_recv_req.recv_buf->rkey;
   
   return 0;
 }
@@ -407,6 +407,7 @@ static struct sswap_rdma_dev *sswap_rdma_get_device(struct rdma_queue *q)
     }
 
     q->ctrl->rdev = rdev;
+    q->ctrl->rdev->dev = q->ctrl->rdev->pd->device;
 
     setup_rdma_ctrl_comm_buffer(q->ctrl);
   }
@@ -473,11 +474,11 @@ int setup_buffers(struct sswap_rdma_ctrl *ctrl)
 				  ctrl->rdma_send_req.send_buf,
 				  sizeof(struct message), DMA_BIDIRECTIONAL);
 
-	pr_debug("%s, Got dma/bus address 0x%llx, for the recv_buf 0x%llx \n",
+	pr_info("%s, Got dma/bus address 0x%llx, for the recv_buf 0x%llx \n",
 		 __func__,
 		 (unsigned long long)ctrl->rdma_recv_req.recv_dma_addr,
 		 (unsigned long long)ctrl->rdma_recv_req.recv_buf);
-	pr_debug("%s, Got dma/bus address 0x%llx, for the send_buf 0x%llx \n",
+	pr_info("%s, Got dma/bus address 0x%llx, for the send_buf 0x%llx \n",
 		 __func__,
 		 (unsigned long long)ctrl->rdma_send_req.send_dma_addr,
 		 (unsigned long long)ctrl->rdma_send_req.send_buf);
@@ -602,6 +603,7 @@ static int sswap_rdma_route_resolved(struct rdma_queue *q,
 {
   struct rdma_conn_param param = {};
   int ret;
+  const struct ib_recv_wr *bad_wr;
 
   param.qp_num = q->qp->qp_num;
   param.flow_control = 1;
@@ -613,6 +615,13 @@ static int sswap_rdma_route_resolved(struct rdma_queue *q,
   pr_info("max_qp_rd_atom=%d max_qp_init_rd_atom=%d\n",
       q->ctrl->rdev->dev->attrs.max_qp_rd_atom,
       q->ctrl->rdev->dev->attrs.max_qp_init_rd_atom);
+
+  ret = ib_post_recv(q->qp, &q->ctrl->rdma_recv_req.rq_wr,
+			   &bad_wr);
+	if (ret) {
+		pr_err("%s: post a 2-sided RDMA message error \n", __func__);
+		return -1;
+	}
 
   ret = rdma_connect_locked(q->cm_id, &param);
   if (ret) {
@@ -1228,7 +1237,8 @@ inline enum qp_type get_queue_type(unsigned int idx)
     return QP_READ_ASYNC;
   else if (idx < numcpus * 3)
     return QP_WRITE_SYNC;
-
+  else if (idx == numcpus * 3)
+    return QP_RPC;
   BUG();
   return QP_READ_SYNC;
 }
@@ -1269,7 +1279,7 @@ static int __init sswap_rdma_init_module(void)
   pr_info("start: %s\n", __FUNCTION__);
   pr_info("* RDMA BACKEND *");
 
-  numcpus = num_online_cpus();
+  numcpus = 4; //num_online_cpus();
   numqueues = numcpus * 3 + 1;
   rpc_queue_id = numqueues - 1;
 

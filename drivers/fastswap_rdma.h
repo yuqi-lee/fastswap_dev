@@ -34,7 +34,8 @@ const uint64_t num_pages_total = TOTAL_PAGES;
 enum qp_type {
   QP_READ_SYNC,
   QP_READ_ASYNC,
-  QP_WRITE_SYNC
+  QP_WRITE_SYNC,
+  QP_RPC,
 };
 
 struct sswap_rdma_dev {

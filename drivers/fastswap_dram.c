@@ -5,16 +5,22 @@
 #include <linux/vmalloc.h>
 #include <linux/slab.h>
 #include "fastswap_dram.h"
+#include <linux/delay.h>
+#include <linux/kthread.h>
 
 #define ONEGB (1024UL*1024*1024)
 #define REMOTE_BUF_SIZE (ONEGB * 33) /* must match what server is allocating */
 #define NUM_ONLINE_CPUS 128
 #define GC_INTERVAL 500
 #define INFO_PRINT_TINTERVAL 1000
+#define RECYCLE_TINTERVAL 100
 #define MB_SHIFT 20
+
+#define RECYCLE_DAEMON_CORE 40
 
 static void *drambuf;
 static void *local_partition_start;
+//static struct task_struct *thread_recycle;
 
 struct GlobalBlockQueue {
     atomic64_t begin;
@@ -24,10 +30,11 @@ struct GlobalBlockQueue {
 };
 
 static struct GlobalBlockQueue* global_block_queue = NULL;
+static struct GlobalBlockQueue* recycle_block_queue = NULL;
 
-uint64_t get_length_queue(void) {
-    uint64_t begin = atomic64_read(&global_block_queue->begin);
-    uint64_t end = atomic64_read(&global_block_queue->end);
+uint64_t get_length_queue(struct GlobalBlockQueue* q) {
+    uint64_t begin = atomic64_read(&q->begin);
+    uint64_t end = atomic64_read(&q->end);
     if (begin == end) {
         return 0;
     }
@@ -38,33 +45,33 @@ uint64_t get_length_queue(void) {
     }
 }
 
-uint64_t pop_queue(void) {
+uint64_t pop_queue(struct GlobalBlockQueue* q) {
     uint64_t ret = 0;
     uint64_t prev_begin;
 
 	//spin_lock(&global_block_queue->lock);
 
-    while(get_length_queue() == 0) ;
-    prev_begin = atomic64_read(&global_block_queue->begin);
-    atomic64_set(&global_block_queue->begin, (prev_begin + 1) % TOTAL_BLOCKS);
-    while(atomic64_read(&global_block_queue->pages[prev_begin]) == 0) ;
-    ret = atomic64_read(&global_block_queue->pages[prev_begin]);
-    atomic64_set(&global_block_queue->pages[prev_begin], 0);
+    while(get_length_queue(q) == 0) ;
+    prev_begin = atomic64_read(&q->begin);
+    atomic64_set(&q->begin, (prev_begin + 1) % TOTAL_BLOCKS);
+    while(atomic64_read(&q->pages[prev_begin]) == 0) ;
+    ret = atomic64_read(&q->pages[prev_begin]);
+    atomic64_set(&q->pages[prev_begin], 0);
     //pr_info("pop_queue_allocator success.\n");
 	//spin_unlock(&global_block_queue->lock);
 
     return ret;
 }
 
-int push_queue(uint64_t page_addr) {
+int push_queue(uint64_t page_addr, struct GlobalBlockQueue* q) {
     uint64_t prev_end;
 
     //spin_lock(&global_block_queue->lock);
-    prev_end = atomic64_read(&global_block_queue->end);
+    prev_end = atomic64_read(&q->end);
 
-    while (get_length_queue() >= TOTAL_BLOCKS - 1) ;
-    atomic64_set(&global_block_queue->end, (prev_end + 1) % TOTAL_BLOCKS);
-    atomic64_set(&global_block_queue->pages[prev_end], page_addr);
+    while (get_length_queue(q) >= TOTAL_BLOCKS - 1) ;
+    atomic64_set(&q->end, (prev_end + 1) % TOTAL_BLOCKS);
+    atomic64_set(&q->pages[prev_end], page_addr);
 	//spin_unlock(&global_block_queue->lock);
     return 0;
 }
@@ -84,7 +91,10 @@ void free_remote_block(struct block_info *bi) {
     rhashtable_remove_fast(blocks_map, &bi->block_node_rhash, blocks_map_params);
 
     //add_free_cache(bi->raddr/*, bi->rkey*/);
-	push_queue(bi->raddr);
+
+    udelay(8);
+    BUG_ON((bi->raddr & ((1 << BLOCK_SHIFT) - 1)) != 0);
+	push_queue(bi->raddr, recycle_block_queue);
     kfree(bi);
 
     atomic64_inc(&num_free_blocks);
@@ -128,7 +138,6 @@ void free_remote_page(uint64_t raddr) {
 	if(bi->cnt == 0) {
 		BUG_ON(bi->free_tree_idx != NUM_FREE_BLOCKS_TREE);
 
-		
         bi->free_tree_idx = free_tree_idx;
 	} else {
 		BUG_ON(bi->free_tree_idx >= NUM_FREE_BLOCKS_TREE);
@@ -151,7 +160,9 @@ int alloc_remote_block(uint32_t free_tree_idx) {
     uint64_t raddr_ = 0;
     uint32_t rkey_ = 0;
 
-    raddr_ = pop_queue();
+    udelay(8);
+    raddr_ = pop_queue(global_block_queue);
+    BUG_ON((raddr_ & ((1 << BLOCK_SHIFT) - 1)) != 0);
     if(raddr_ == 0) {
         pr_err("alloc_remote_block failed on pop global queue.\n");
         return -1;
@@ -328,6 +339,24 @@ void swap_pages_timer_callback(struct timer_list *timer) {
   mod_timer(timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL)); 
 }
 
+void recycle_timer_callback(struct timer_list *timer) {
+  uint32_t count = 0;
+  uint64_t addr;
+  //set_cpus_allowed_ptr(current, cpumask_of(RECYCLE_DAEMON_CORE));
+  
+  while(get_length_queue(recycle_block_queue)) {
+    addr = pop_queue(recycle_block_queue);
+    udelay(30);
+    push_queue(addr, global_block_queue);
+    count++;
+  }
+
+  if(count > 0)
+    pr_info("recycle %d remote blocks.", count);
+
+  mod_timer(timer, jiffies + msecs_to_jiffies(RECYCLE_TINTERVAL)); 
+}
+
 void gc_timer_callback(struct timer_list *timer) {
   struct block_info *bi;  
   struct rb_node *cur_node;
@@ -379,6 +408,7 @@ static int __init sswap_dram_init_module(void)
     local_partition_start = (void*)(((uint64_t)drambuf + RBLOCK_SIZE - 1) & ~(RBLOCK_SIZE - 1));
 	pr_info("vzalloc'ed %lu bytes for dram backend\n", REMOTE_BUF_SIZE);
 
+    /*init global_block_queue*/
     global_block_queue = (struct GlobalBlockQueue*) vzalloc(sizeof(struct GlobalBlockQueue));
 	if(!global_block_queue) {
 		pr_err("Bad vzalloc for global_block_queue.\n");
@@ -391,9 +421,21 @@ static int __init sswap_dram_init_module(void)
     }
 
 	idx = 1;
-    while(get_length_queue() < TOTAL_BLOCKS - 10) {
-      push_queue((uint64_t)local_partition_start + (idx * RBLOCK_SIZE));
+    while(get_length_queue(global_block_queue) < TOTAL_BLOCKS - 10) {
+      push_queue((uint64_t)local_partition_start + (idx * RBLOCK_SIZE), global_block_queue);
       idx++;
+    }
+
+    /*init recycle_block_queue*/
+    recycle_block_queue = (struct GlobalBlockQueue*) vzalloc(sizeof(struct GlobalBlockQueue));
+	if(!recycle_block_queue) {
+		pr_err("Bad vzalloc for recycle_block_queue.\n");
+	}
+	//spin_lock_init(&global_block_queue->lock);
+    atomic64_set(&recycle_block_queue->begin, 0);
+    atomic64_set(&recycle_block_queue->end, 0);
+    for(idx = 0;idx < TOTAL_BLOCKS; ++idx) {
+      atomic64_set(&recycle_block_queue->pages[idx], 0);
     }
 
     blocks_map = vzalloc(sizeof(struct rhashtable));
@@ -418,6 +460,8 @@ static int __init sswap_dram_init_module(void)
 	timer_setup(&swap_pages_timer, swap_pages_timer_callback, 0);
     mod_timer(&swap_pages_timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL));
 
+    timer_setup(&recycle_timer, recycle_timer_callback, 0);
+    mod_timer(&recycle_timer, jiffies + msecs_to_jiffies(RECYCLE_TINTERVAL));
 
 	pr_info("DRAM backend is ready for reqs\n");
 	return 0;
