@@ -39,7 +39,6 @@ struct rhashtable_params blocks_map_params = {
 struct rhashtable *blocks_map = NULL;
 struct rb_root free_blocks_trees[NUM_FREE_BLOCKS_TREE];
 spinlock_t free_blocks_tree_locks[NUM_FREE_BLOCKS_TREE];
-spinlock_t global_lock;
 
 struct timer_list swap_pages_timer;
 struct timer_list gc_timer;

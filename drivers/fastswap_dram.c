@@ -3,7 +3,9 @@
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
 #include <linux/vmalloc.h>
+#include <linux/delay.h>
 #include <linux/slab.h>
+#include <linux/time.h>
 #include "fastswap_dram.h"
 #include <linux/delay.h>
 #include <linux/kthread.h>
@@ -110,14 +112,15 @@ void free_remote_page(uint64_t raddr) {
     //uint32_t count = 0;
     
     BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
-    spin_lock(&global_lock);
+    spin_lock(&free_blocks_tree_locks[free_tree_idx]);
 
     raddr_block = raddr >> BLOCK_SHIFT;
     raddr_block = raddr_block << BLOCK_SHIFT;
     bi = rhashtable_lookup_fast(blocks_map, &raddr_block, blocks_map_params);
     if(!bi) {
         pr_err("the page being free(%p) is not exit: cannot find out block_info.\n", (void*)raddr);
-        spin_unlock(&global_lock);
+        //spin_unlock(&global_lock);
+        spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
         return;
     }
 
@@ -149,8 +152,8 @@ void free_remote_page(uint64_t raddr) {
 	rb_add(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx], compare_blocks);
 
     //spin_unlock(&bi->block_lock);
-    //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
-    spin_unlock(&global_lock);
+    spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
+    //spin_unlock(&global_lock);
 }
 EXPORT_SYMBOL(free_remote_page);
 
@@ -205,14 +208,15 @@ uint64_t alloc_remote_page(void) {
     //uint8_t locked = 0;
 	struct rb_node *first_node;
 
-    spin_lock(&global_lock);
+    //spin_lock(&global_lock);
+    spin_lock(&free_blocks_tree_locks[free_tree_idx]);
 
     if(RB_EMPTY_ROOT(&free_blocks_trees[free_tree_idx])) {
         ret = alloc_remote_block(free_tree_idx);
         if(ret) {
             pr_err("can not alloc remote block.\n");
-            //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
-            spin_unlock(&global_lock);
+            spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
+            //spin_unlock(&global_lock);
             return 0;
         }
     }
@@ -220,8 +224,8 @@ uint64_t alloc_remote_page(void) {
     first_node = rb_first(&free_blocks_trees[free_tree_idx]);
 	if(!first_node) {
 		pr_err("fail to add new block to free_blocks_list\n");
-        //spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
-        spin_unlock(&global_lock);
+        spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
+        //spin_unlock(&global_lock);
         return 0;
 	}
 	
@@ -244,7 +248,8 @@ uint64_t alloc_remote_page(void) {
         rb_erase(&bi->block_node_rbtree, &free_blocks_trees[free_tree_idx]);
         bi->free_tree_idx = NUM_FREE_BLOCKS_TREE;
     }
-    spin_unlock(&global_lock);
+    //spin_unlock(&global_lock);
+    spin_unlock(&free_blocks_tree_locks[free_tree_idx]);
 
     raddr = bi->raddr + (offset << PAGE_SHIFT);
     return raddr;
@@ -256,6 +261,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 {
   	uint64_t raddr = offset_to_rpage_addr[roffset];
 	void *page_vaddr;
+    udelay(6);
 
 
   	BUG_ON(roffset >= TOTAL_PAGES);
@@ -289,6 +295,7 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 {
 	void *page_vaddr;
 	uint64_t raddr = offset_to_rpage_addr[roffset];
+    udelay(6);
 
 
   	BUG_ON(roffset >= TOTAL_PAGES);
@@ -364,7 +371,8 @@ void gc_timer_callback(struct timer_list *timer) {
 
   for(i = 0;i < NUM_FREE_BLOCKS_TREE; ++i) {
     //if(spin_trylock(&free_blocks_tree_locks[i])) {
-    spin_lock(&global_lock);
+    //spin_lock(&global_lock);
+    spin_lock(&free_blocks_tree_locks[i]);
 	cur_node = rb_last(&free_blocks_trees[i]);
     while(cur_node) {
 		bi = rb_entry(cur_node, struct block_info, block_node_rbtree);
@@ -377,8 +385,8 @@ void gc_timer_callback(struct timer_list *timer) {
         }
 		free_remote_block(bi);
     }
-    //spin_unlock(&free_blocks_tree_locks[i]);
-    spin_unlock(&global_lock);
+    spin_unlock(&free_blocks_tree_locks[i]);
+    //spin_unlock(&global_lock);
   }
 
   mod_timer(timer, jiffies + msecs_to_jiffies(GC_INTERVAL)); 
@@ -452,7 +460,7 @@ static int __init sswap_dram_init_module(void)
 	}
 	pr_info("free_blocks_trees init successfully.\n");
 
-    spin_lock_init(&global_lock);
+    //spin_lock_init(&global_lock);
 
 	timer_setup(&gc_timer, gc_timer_callback, 0);
     mod_timer(&gc_timer, jiffies + msecs_to_jiffies(GC_INTERVAL));

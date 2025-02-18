@@ -174,7 +174,7 @@ static device *get_device(struct queue *q)
     TEST_Z(dev->pd);
 
     struct ctrl *ctrl = q->ctrl;
-    TEST_NZ(ctrl == gctrl);
+    TEST_Z(ctrl == gctrl);
 
     TEST_Z(q->ctrl->comp_channel = ibv_create_comp_channel(q->cm_id->verbs));
     TEST_Z(q->cq = ibv_create_cq(q->cm_id->verbs, 10, NULL, ctrl->comp_channel, 0));
@@ -186,8 +186,6 @@ static device *get_device(struct queue *q)
     set_thread_affinity(ctrl->allocator, CORE_ID);
     ctrl->recycler = new std::thread(recycler, dev->pd);
     set_thread_affinity(ctrl->recycler, CORE_ID - 1);
-
-    printf("registered memory region of %zu bytes\n", BUFFER_SIZE);
     ctrl->dev = dev;
   }
 
@@ -258,9 +256,15 @@ void alloc_new_block(struct queue *q) {
   ret = block_queue->allocate(raddr, rkey);
   block_queue->mtx.unlock();
 
+  assert(raddr != 0);
+  assert(rkey != 0);
+
+  std::cout<< "remote block address: " << raddr << ", rkey: " << rkey << std::endl;
+
   rdma_session->send_msg->type = ALLOCATE_BLOCK;
   rdma_session->send_msg->addr = raddr;
   rdma_session->send_msg->rkey = rkey;
+  rdma_session->send_msg->status = WORK;
 
   send_message(q);
 }
@@ -324,7 +328,9 @@ void handle_cqe(struct ibv_wc *wc) {
   if (wc->opcode == IBV_WC_RECV) {
     switch (ctrl->recv_msg->type) {
     case ALLOCATE_BLOCK:
-      //fprintf(stderr, "%s, QUERY \n", __func__);
+      std::cout<<"....." << std::endl << std::endl;
+      std::cout<<"recieve a allocate request" << std::endl;
+      std::cout<< std::endl << std::endl << "....." << std::endl;
       alloc_new_block(q);
       post_receives(q);
       break;
@@ -387,13 +393,13 @@ int on_connect_request(struct rdma_cm_id *id, struct rdma_conn_param *param)
 
   TEST_NZ(ibv_query_device(dev->verbs, &attrs));
 
-  printf("attrs: max_qp=%d, max_qp_wr=%d, max_cq=%d max_cqe=%d \
+  //printf("attrs: max_qp=%d, max_qp_wr=%d, max_cq=%d max_cqe=%d \
           max_qp_rd_atom=%d, max_qp_init_rd_atom=%d\n", attrs.max_qp,
-          attrs.max_qp_wr, attrs.max_cq, attrs.max_cqe,
-          attrs.max_qp_rd_atom, attrs.max_qp_init_rd_atom);
+  //        attrs.max_qp_wr, attrs.max_cq, attrs.max_cqe,
+  //        attrs.max_qp_rd_atom, attrs.max_qp_init_rd_atom);
 
-  printf("ctrl attrs: initiator_depth=%d responder_resources=%d\n",
-      param->initiator_depth, param->responder_resources);
+  //printf("ctrl attrs: initiator_depth=%d responder_resources=%d\n",
+  //    param->initiator_depth, param->responder_resources);
 
   // the following should hold for initiator_depth:
   // initiator_depth <= max_qp_init_rd_atom, and

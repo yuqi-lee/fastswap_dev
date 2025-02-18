@@ -1,8 +1,8 @@
 .PHONY: clean
 
-CFLAGS := -Wall -O2 -g -ggdb -Werror
+CFLAGS := -Wall -O0 -g -ggdb -Werror
 LDLIBS := ${LDLIBS} -lrdmacm -libverbs -lpthread
-CC := g++
+CC := g++ -O0 -g
 
 APPS := rmserver
 
