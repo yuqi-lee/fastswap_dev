@@ -2,12 +2,30 @@
 
 #include <linux/highmem.h>
 #include <linux/pagemap.h>
+#include <linux/delay.h>
 #include "fastswap_dram.h"
 
 #define ONEGB (1024UL*1024*1024)
-#define REMOTE_BUF_SIZE (ONEGB * 64) /* must match what server is allocating */
+#define REMOTE_BUF_SIZE (ONEGB * 32) /* must match what server is allocating */
+
+#define INFO_PRINT_TINTERVAL 1000
 
 static void *drambuf;
+
+uint64_t prev_num_swapout_pages = 0;
+uint64_t prev_num_swapin_pages = 0;
+
+void swap_pages_timer_callback(struct timer_list *timer) {
+  uint64_t num_swapout_pages_tmp = atomic64_read(&num_swapout_pages);
+  uint64_t num_swapin_pages_tmp = atomic64_read(&num_swapin_pages);
+  int swapout_bw = (num_swapout_pages_tmp - prev_num_swapout_pages) / 1000;
+  int swapin_bw = (num_swapin_pages_tmp - prev_num_swapin_pages) / 1000;
+  prev_num_swapout_pages = num_swapout_pages_tmp;
+  prev_num_swapin_pages = num_swapin_pages_tmp;
+
+  pr_info("swapout bw = %d Kops, swapin bw = %d Kops", swapout_bw, swapin_bw);
+  mod_timer(timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL)); 
+}
 
 int sswap_rdma_write(struct page *page, u64 roffset)
 {
@@ -16,6 +34,8 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 	page_vaddr = kmap_atomic(page);
 	copy_page((void *) (drambuf + roffset), page_vaddr);
 	kunmap_atomic(page_vaddr);
+	udelay(5);
+	atomic64_inc(&num_swapout_pages);
 	return 0;
 }
 EXPORT_SYMBOL(sswap_rdma_write);
@@ -37,6 +57,8 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 	page_vaddr = kmap_atomic(page);
 	copy_page(page_vaddr, (void *) (drambuf + roffset));
 	kunmap_atomic(page_vaddr);
+	udelay(5);
+	atomic64_inc(&num_swapin_pages);
 
 	SetPageUptodate(page);
 	unlock_page(page);
@@ -70,6 +92,10 @@ static int __init sswap_dram_init_module(void)
 	pr_info("vzalloc'ed %lu bytes for dram backend\n", REMOTE_BUF_SIZE);
 
 	pr_info("DRAM backend is ready for reqs\n");
+
+	timer_setup(&swap_pages_timer, swap_pages_timer_callback, 0);
+    mod_timer(&swap_pages_timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL));
+
 	return 0;
 }
 
