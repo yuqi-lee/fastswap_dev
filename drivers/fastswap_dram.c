@@ -34,7 +34,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 	page_vaddr = kmap_atomic(page);
 	copy_page((void *) (drambuf + roffset), page_vaddr);
 	kunmap_atomic(page_vaddr);
-	udelay(5);
+	udelay(1);
 	atomic64_inc(&num_swapout_pages);
 	return 0;
 }
@@ -57,7 +57,7 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 	page_vaddr = kmap_atomic(page);
 	copy_page(page_vaddr, (void *) (drambuf + roffset));
 	kunmap_atomic(page_vaddr);
-	udelay(5);
+	udelay(1);
 	atomic64_inc(&num_swapin_pages);
 
 	SetPageUptodate(page);
