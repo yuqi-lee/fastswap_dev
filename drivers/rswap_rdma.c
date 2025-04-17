@@ -415,6 +415,15 @@ int rswap_create_rdma_queue(struct rdma_session_context *rdma_session,
 		}
 		pr_info("%s, created pd %p\n", __func__,
 			rdma_session->rdma_dev->pd);
+
+		rdma_session->rdma_dev->mr = ib_alloc_mr(rdma_session->rdma_dev->pd,
+			IB_MR_TYPE_MEM_REG, 4096
+		);
+		if(IS_ERR(rdma_session->rdma_dev->mr)){
+			pr_err("%s, ib_alloc_mr failed\n", __func__);
+			goto err;
+		}
+		
 		setup_rdma_session_comm_buffer(rdma_session);
 	}
 

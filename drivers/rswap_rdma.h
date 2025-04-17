@@ -143,6 +143,7 @@ struct rswap_rdma_queue {
 struct rswap_rdma_dev {
 	struct ib_device *dev;
 	struct ib_pd *pd;
+	struct ib_mr *mr;
 };
 
 struct rdma_session_context {
