@@ -114,6 +114,8 @@ void free_remote_page(uint64_t raddr) {
     BUG_ON((raddr & ((1 << PAGE_SHIFT) - 1)) != 0);
     spin_lock(&free_blocks_tree_locks[free_tree_idx]);
 
+    udelay(8);
+
     raddr_block = raddr >> BLOCK_SHIFT;
     raddr_block = raddr_block << BLOCK_SHIFT;
     bi = rhashtable_lookup_fast(blocks_map, &raddr_block, blocks_map_params);
@@ -210,6 +212,7 @@ uint64_t alloc_remote_page(void) {
 
     //spin_lock(&global_lock);
     spin_lock(&free_blocks_tree_locks[free_tree_idx]);
+    udelay(8);
 
     if(RB_EMPTY_ROOT(&free_blocks_trees[free_tree_idx])) {
         ret = alloc_remote_block(free_tree_idx);
@@ -261,7 +264,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
 {
   	uint64_t raddr = offset_to_rpage_addr[roffset];
 	void *page_vaddr;
-    udelay(6);
+    udelay(8);
 
 
   	BUG_ON(roffset >= TOTAL_PAGES);
@@ -276,7 +279,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
     	offset_to_rpage_addr[roffset] = raddr;
   	}
 
-    atomic64_inc(&num_swap_pages);
+    atomic64_inc(&num_swapout_pages);
 	page_vaddr = kmap_atomic(page);
 	copy_page((void *)raddr , page_vaddr);
 	kunmap_atomic(page_vaddr);
@@ -295,7 +298,7 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 {
 	void *page_vaddr;
 	uint64_t raddr = offset_to_rpage_addr[roffset];
-    udelay(6);
+    udelay(8);
 
 
   	BUG_ON(roffset >= TOTAL_PAGES);
@@ -308,6 +311,7 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 	page_vaddr = kmap_atomic(page);
 	copy_page(page_vaddr, (void *)raddr);
 	kunmap_atomic(page_vaddr);
+    atomic64_inc(&num_swapin_pages);
 
 	SetPageUptodate(page);
 	unlock_page(page);
@@ -340,7 +344,10 @@ void swap_pages_timer_callback(struct timer_list *timer) {
   int num_alloc_blocks_tmp = atomic64_read(&num_alloc_blocks);
   int num_free_blocks_tmp = atomic64_read(&num_free_blocks);
   int num_free_fail_tmp = atomic64_read(&num_free_fail);
+  int num_swapout_pages_tmp = atomic64_read(&num_swapout_pages);
+  int num_swapin_pages_tmp = atomic64_read(&num_swapin_pages);
 
+  pr_info("swapout count = %d, swapin count = %d", num_swapout_pages_tmp, num_swapin_pages_tmp);
   pr_info("used swap memory = %d MB, current alloc memory = %d MB\n", (num_swap_pages_tmp >> (MB_SHIFT - PAGE_SHIFT)), ((num_alloc_blocks_tmp - num_free_blocks_tmp) << (BLOCK_SHIFT - MB_SHIFT)));
   pr_info("num_alloc_blocks = %d, num_free_blocks = %d, num_free_fail = %d\n", num_alloc_blocks_tmp, num_free_blocks_tmp, num_free_fail_tmp);
   mod_timer(timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL)); 

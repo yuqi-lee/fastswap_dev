@@ -45,6 +45,8 @@ struct timer_list gc_timer;
 struct timer_list recycle_timer;
 
 atomic64_t num_swap_pages = ATOMIC64_INIT(0);
+atomic64_t num_swapin_pages = ATOMIC64_INIT(0);
+atomic64_t num_swapout_pages = ATOMIC64_INIT(0);
 atomic64_t num_alloc_blocks = ATOMIC64_INIT(0);
 atomic64_t num_free_blocks = ATOMIC64_INIT(0);
 atomic64_t num_free_fail = ATOMIC64_INIT(0);

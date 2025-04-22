@@ -72,11 +72,22 @@ int push_queue(uint64_t page_addr) {
     return 0;
 }
 
+void swap_pages_timer_callback(struct timer_list *timer) {
+  
+  int num_swapout_pages_tmp = atomic64_read(&num_swapout_pages);
+  int num_swapin_pages_tmp = atomic64_read(&num_swapin_pages);
+  int num_swapfree_pages_tmp = atomic64_read(&num_swapfree_pages);
+
+  pr_info("swapout count = %d, swapin count = %d, swapfree count = %d", num_swapout_pages_tmp, num_swapin_pages_tmp, num_swapfree_pages_tmp);
+  
+  mod_timer(timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL)); 
+}
+
 
 void free_remote_page(uint64_t raddr) {
     uint64_t start;
     start = TIME_NOW;
-    while(TIME_DURATION_US(start, TIME_NOW) < 8) {
+    while(TIME_DURATION_US(start, TIME_NOW) < 7) {
         ;
     }
 
@@ -88,7 +99,7 @@ EXPORT_SYMBOL(free_remote_page);
 uint64_t alloc_remote_page(void) {
     uint64_t start, raddr;
     start = TIME_NOW;
-    while(TIME_DURATION_US(start, TIME_NOW) < 8) {
+    while(TIME_DURATION_US(start, TIME_NOW) < 7) {
         ;
     }
 
@@ -123,6 +134,7 @@ int sswap_rdma_write(struct page *page, u64 roffset)
   	}
 
     atomic64_inc(&num_swap_pages);
+    atomic64_inc(&num_swapout_pages);
 	page_vaddr = kmap_atomic(page);
 	copy_page((void *)raddr , page_vaddr);
 	kunmap_atomic(page_vaddr);
@@ -158,6 +170,7 @@ int sswap_rdma_read_async(struct page *page, u64 roffset)
 	page_vaddr = kmap_atomic(page);
 	copy_page(page_vaddr, (void *)raddr);
 	kunmap_atomic(page_vaddr);
+    atomic64_inc(&num_swapin_pages);
 
 	SetPageUptodate(page);
 	unlock_page(page);
@@ -180,6 +193,7 @@ void sswap_rdma_free_page(u64 roffset) {
   	free_remote_page(offset_to_rpage_addr[roffset]);
   	offset_to_rpage_addr[roffset] = 0;
   	atomic64_dec(&num_swap_pages);
+    atomic64_inc(&num_swapfree_pages);
 
 	return;
 }
@@ -226,6 +240,9 @@ static int __init sswap_dram_init_module(void)
     }
 
     spin_lock_init(&global_page_queue->lock);
+
+    timer_setup(&swap_pages_timer, swap_pages_timer_callback, 0);
+    mod_timer(&swap_pages_timer, jiffies + msecs_to_jiffies(INFO_PRINT_TINTERVAL));
 
 
 	pr_info("DRAM backend is ready for reqs\n");

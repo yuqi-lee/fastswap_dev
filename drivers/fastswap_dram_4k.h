@@ -15,6 +15,9 @@ struct timer_list gc_timer;
 
 atomic64_t num_swap_pages = ATOMIC64_INIT(0);
 atomic64_t num_free_fail = ATOMIC64_INIT(0);
+atomic64_t num_swapin_pages = ATOMIC64_INIT(0);
+atomic64_t num_swapout_pages = ATOMIC64_INIT(0);
+atomic64_t num_swapfree_pages = ATOMIC64_INIT(0);
 
 uint64_t offset_to_rpage_addr[TOTAL_PAGES] = {0};
 uint32_t offset_to_rkey[TOTAL_PAGES] = {0};
