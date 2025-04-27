@@ -51,7 +51,8 @@ atomic64_t num_alloc_blocks = ATOMIC64_INIT(0);
 atomic64_t num_free_blocks = ATOMIC64_INIT(0);
 atomic64_t num_free_fail = ATOMIC64_INIT(0);
 
-uint64_t offset_to_rpage_addr[TOTAL_PAGES] = {0};
+//uint64_t offset_to_rpage_addr[TOTAL_PAGES] = {0};
+DEFINE_XARRAY(offset_to_rpage_addr);
 
 
 int sswap_rdma_read_async(struct page *page, u64 roffset);
