@@ -1,2 +1,0 @@
-AUC:  0.8392185478695252
-Total running time: 3506.324504852295 seconds #num_round=3000, 4 threads
