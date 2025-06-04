@@ -28,6 +28,7 @@ module_param_string(cip, clientip, INET_ADDRSTRLEN, 0644);
 #define QP_MAX_SEND_WR	(4096)
 #define CQ_NUM_CQES	(QP_MAX_SEND_WR)
 #define POLL_BATCH_HIGH (QP_MAX_SEND_WR / 4)
+#define NUM_REMOTE_SWAP_AREA 1
 
 int prev_num_direct_swapout_pages_done = 0;
 int prev_num_direct_swapin_pages_done = 0;
